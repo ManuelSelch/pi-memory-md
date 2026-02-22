@@ -21,23 +21,26 @@ Inspired by Letta memory filesystem:
 **Base path**: Configured via `settings["pi-memory-md"].localPath` (default: `~/.pi/memory-md`)
 
 ```
-{localPath}/{project-name}/
-├── core/                          # Auto-injected to context every session
-│   ├── user/                        # 【FIXED】User information
-│   │   ├── identity.md              # Who the user is
-│   │   └── prefer.md                # User habits and code style preferences
-│   │
-│   └── project/                     # 【FIXED】Project information
-│       ├── overview.md              # Project overview
-│       ├── architecture.md          # Architecture and design
-│       ├── conventions.md           # Code conventions
-│       └── commands.md              # Common commands
-│
-├── docs/                            # 【AGENT-CREATED】Reference documentation
-├── archive/                         # 【AGENT-CREATED】Historical information
-├── research/                        # 【AGENT-CREATED】Research findings
-└── notes/                           # 【AGENT-CREATED】Standalone notes
+{localPath}/
+└── {project-name}/                  # Project memory root
+    ├── core/                        # Auto-injected to context every session
+    │   ├── user/                    # 【FIXED】User information
+    │   │   ├── identity.md          # Who the user is
+    │   │   └── prefer.md            # User habits and code style preferences
+    │   │
+    │   └── project/                 # 【FIXED】Project information (pre-created)
+    │       ├── overview.md          # Project overview
+    │       ├── architecture.md      # Architecture and design
+    │       ├── conventions.md       # Code conventions
+    │       └── commands.md          # Common commands
+    │
+    ├── docs/                        # 【AGENT-CREATED】Reference documentation
+    ├── archive/                     # 【AGENT-CREATED】Historical information
+    ├── research/                    # 【AGENT-CREATED】Research findings
+    └── notes/                       # 【AGENT-CREATED】Standalone notes
 ```
+
+**Important:** `core/project/` is a pre-defined folder under `core/`. Do NOT create another `project/` folder at the project root level.
 
 ## Core Design: Fixed vs Flexible
 
@@ -71,12 +74,14 @@ These are **pre-defined** and **auto-injected** into every session:
 - User-related → `core/user/`
 - Project-related → `core/project/`
 
-**No** → Place at root level
+**No** → Place at project root level (same level as `core/`)
 - Reference docs → `docs/`
 - Historical → `archive/`
 - Research → `research/`
 - Notes → `notes/`
 - Other? → Create appropriate folder
+
+**Important:** `core/project/` is a FIXED subdirectory under `core/`. Always use `core/project/` for project-specific memory files, NEVER create a `project/` folder at the root level.
 
 ## YAML Frontmatter Schema
 
@@ -203,9 +208,9 @@ The extension preserves existing `created` date and updates `updated` automatica
 
 **Do NOT create any other folders under `core/`.**
 
-### Root level - COMPLETE freedom
+### Root level (same level as core/) - COMPLETE freedom
 
-**Agent can create any folder structure at root level:**
+**Agent can create any folder structure at project root level (same level as `core/`):**
 
 - `docs/` - Reference documentation
 - `archive/` - Historical information
@@ -215,6 +220,8 @@ The extension preserves existing `created` date and updates `updated` automatica
 - `guides/` - How-to guides
 
 **Rule:** Organize root level in a way that makes sense for the project.
+
+**WARNING:** Do NOT create a `project/` folder at root level. Use `core/project/` instead.
 
 ## Best Practices
 
@@ -227,8 +234,9 @@ The extension preserves existing `created` date and updates `updated` automatica
 - Organize root level folders by content type
 
 ### DON'T:
-- Create folders under `core/` (only `user/` and `project/` exist)
+- Create folders under `core/` other than `user/` and `project/`
 - Create other files under `core/user/` (only `identity.md` and `prefer.md`)
+- Create a `project/` folder at root level (use `core/project/` instead)
 - Put reference docs in `core/` (use root `docs/`)
 - Create giant files (split into focused topics)
 - Mix unrelated content in same file
