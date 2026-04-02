@@ -1,6 +1,6 @@
 {
   "name": "pi-memory-md",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "description": "Letta-like memory management for pi using structured markdown files in a GitHub repository",
   "type": "module",
   "license": "MIT",
@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@mariozechner/pi-coding-agent": "latest",
+    "@rslint/tsgo": "^0.3.4",
     "@types/node": "^20.0.0",
     "husky": "^9.1.7",
     "typescript": "^5.0.0"
@@ -51,6 +52,6 @@
   ],
   "scripts": {
     "prepare": "husky",
-    "check": "biome check --write --error-on-warnings . && tsgo --noEmit"
+    "check": "biome check --write --error-on-warnings . && tsgo -config tsconfig.json"
   }
 }

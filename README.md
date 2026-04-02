@@ -25,7 +25,7 @@ pi install git:github.com/VandeeFeng/pi-memory-md
 {
   "pi-memory-md": {
     "enabled": true,
-    "repoUrl": "git@github.com:username/repo.git",
+    "repoUrl": "git@github.com:username/repo.git", // Or HTTPS format
     "localPath": "~/.pi/memory-md"
   }
 }
@@ -110,8 +110,7 @@ Markdown content...
 {
   "pi-memory-md": {
     "enabled": true,
-    "repoUrl": "git@github.com:username/repo.git",
-    "localPath": "~/.pi/memory-md",
+    "repoUrl": "git@github.com:username/repo.git", // Or HTTPS format
     "injection": "message-append",
     "autoSync": {
       "onSessionStart": true

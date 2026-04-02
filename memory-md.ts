@@ -41,6 +41,7 @@ export interface MemoryMdSettings {
 export interface GitResult {
   stdout: string;
   success: boolean;
+  timeout?: boolean;
 }
 
 export interface SyncResult {
@@ -117,14 +118,28 @@ function loadSettings(): MemoryMdSettings {
  * Git sync operations (fetch, pull, push, status).
  */
 
-export async function gitExec(pi: ExtensionAPI, cwd: string, ...args: string[]): Promise<GitResult> {
+const TIMEOUT_MS = 10000;
+const TIMEOUT_MESSAGE =
+  "Unable to connect to GitHub repository, connection timeout (10s). Please check your network connection or try again later.";
+
+export async function gitExec(
+  pi: ExtensionAPI,
+  cwd: string,
+  args: string[],
+  timeoutMs = TIMEOUT_MS,
+): Promise<GitResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const result = await pi.exec("git", args, { cwd });
-    return {
-      stdout: result.stdout || "",
-      success: true,
-    };
-  } catch {
+    const result = await pi.exec("git", args, { cwd, signal: controller.signal });
+    clearTimeout(timeoutId);
+    return { stdout: result.stdout || "", success: true };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    const err = error as { name?: string; code?: string };
+    const isTimeout = err?.name === "AbortError" || err?.code === "ABORT_ERR";
+    if (isTimeout) return { stdout: "", success: false, timeout: true };
     return { stdout: "", success: false };
   }
 }
@@ -134,12 +149,13 @@ export async function syncRepository(
   settings: MemoryMdSettings,
   isRepoInitialized: { value: boolean },
 ): Promise<SyncResult> {
-  const localPath = settings.localPath;
-  const repoUrl = settings.repoUrl;
+  const { localPath, repoUrl } = settings;
 
   if (!repoUrl || !localPath) {
     return { success: false, message: "GitHub repo URL or local path not configured" };
   }
+
+  const repoName = getRepoName(settings);
 
   if (fs.existsSync(localPath)) {
     const gitDir = path.join(localPath, ".git");
@@ -147,14 +163,13 @@ export async function syncRepository(
       return { success: false, message: `Directory exists but is not a git repo: ${localPath}` };
     }
 
-    const pullResult = await gitExec(pi, localPath, "pull", "--rebase", "--autostash");
-    if (!pullResult.success) {
-      return { success: false, message: "Pull failed - try manual git operations" };
-    }
+    const pullResult = await gitExec(pi, localPath, ["pull", "--rebase", "--autostash"]);
+    if (pullResult.timeout) return { success: false, message: TIMEOUT_MESSAGE };
+    if (!pullResult.success) return { success: false, message: "Pull failed - check repo URL and authentication" };
 
     isRepoInitialized.value = true;
     const updated = pullResult.stdout.includes("Updating") || pullResult.stdout.includes("Fast-forward");
-    const repoName = getRepoName(settings);
+
     return {
       success: true,
       message: updated ? `Pulled latest changes from [${repoName}]` : `[${repoName}] is already latest`,
@@ -166,15 +181,15 @@ export async function syncRepository(
 
   const memoryDirName = path.basename(localPath);
   const parentDir = path.dirname(localPath);
-  const cloneResult = await gitExec(pi, parentDir, "clone", repoUrl, memoryDirName);
+  const cloneResult = await gitExec(pi, parentDir, ["clone", repoUrl, memoryDirName]);
 
+  if (cloneResult.timeout) return { success: false, message: TIMEOUT_MESSAGE };
   if (cloneResult.success) {
     isRepoInitialized.value = true;
-    const repoName = getRepoName(settings);
     return { success: true, message: `Cloned [${repoName}] successfully`, updated: true };
   }
 
-  return { success: false, message: "Clone failed - check repo URL and auth" };
+  return { success: false, message: "Clone failed - check repo URL and authentication" };
 }
 
 /**
@@ -368,9 +383,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
   ): boolean {
     settings = loadSettings();
 
-    if (!settings.enabled) {
-      return false;
-    }
+    if (!settings.enabled) return false;
 
     const memoryDir = getMemoryDir(settings, ctx);
     const coreDir = path.join(memoryDir, "core");
@@ -413,9 +426,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
       syncPromise = null;
     }
 
-    if (!cachedMemoryContext) {
-      return undefined;
-    }
+    if (!cachedMemoryContext) return undefined;
 
     const mode = settings.injection || "message-append";
     const isFirstInjection = !memoryInjected;
@@ -459,7 +470,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
         return;
       }
 
-      const result = await gitExec(pi, settings.localPath!, "status", "--porcelain");
+      const result = await gitExec(pi, settings.localPath!, ["status", "--porcelain"]);
       const isDirty = result.stdout.trim().length > 0;
 
       ctx.ui.notify(

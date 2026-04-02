@@ -15,6 +15,9 @@ import {
   writeMemoryFile,
 } from "./memory-md.js";
 
+const TIMEOUT_MESSAGE =
+  "Unable to connect to GitHub repository, connection timeout (10s). Please check your network connection or try again later.";
+
 function renderWithExpandHint(text: string, theme: Theme, lineCount: number): Text {
   const remaining = lineCount - 1;
   if (remaining > 0) {
@@ -53,26 +56,16 @@ export function registerMemorySync(
         const initialized = isRepoInitialized.value && fs.existsSync(coreUserDir);
         if (!initialized) {
           return {
-            content: [
-              {
-                type: "text",
-                text: "Memory repository not initialized. Use memory_init to set up.",
-              },
-            ],
+            content: [{ type: "text", text: "Memory repository not initialized. Use memory_init to set up." }],
             details: { initialized: false },
           };
         }
 
-        const result = await gitExec(pi, localPath, "status", "--porcelain");
+        const result = await gitExec(pi, localPath, ["status", "--porcelain"]);
         const dirty = result.stdout.trim().length > 0;
 
         return {
-          content: [
-            {
-              type: "text",
-              text: dirty ? `Changes detected:\n${result.stdout}` : "No uncommitted changes",
-            },
-          ],
+          content: [{ type: "text", text: dirty ? `Changes detected:\n${result.stdout}` : "No uncommitted changes" }],
           details: { initialized: true, dirty },
         };
       }
@@ -86,15 +79,15 @@ export function registerMemorySync(
       }
 
       if (action === "push") {
-        const statusResult = await gitExec(pi, localPath, "status", "--porcelain");
+        const statusResult = await gitExec(pi, localPath, ["status", "--porcelain"]);
         const hasChanges = statusResult.stdout.trim().length > 0;
 
         if (hasChanges) {
-          await gitExec(pi, localPath, "add", ".");
+          await gitExec(pi, localPath, ["add", "."]);
 
           const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
           const commitMessage = `Update memory - ${timestamp}`;
-          const commitResult = await gitExec(pi, localPath, "commit", "-m", commitMessage);
+          const commitResult = await gitExec(pi, localPath, ["commit", "-m", commitMessage]);
 
           if (!commitResult.success) {
             return {
@@ -104,7 +97,14 @@ export function registerMemorySync(
           }
         }
 
-        const result = await gitExec(pi, localPath, "push");
+        const result = await gitExec(pi, localPath, ["push"]);
+        if (result.timeout) {
+          return {
+            content: [{ type: "text", text: TIMEOUT_MESSAGE }],
+            details: { success: false, timeout: true },
+          };
+        }
+
         if (result.success) {
           return {
             content: [
@@ -118,8 +118,9 @@ export function registerMemorySync(
             details: { success: true, committed: hasChanges },
           };
         }
+
         return {
-          content: [{ type: "text", text: "Push failed - check git status" }],
+          content: [{ type: "text", text: "Push failed - check git status and authentication" }],
           details: { success: false },
         };
       }
