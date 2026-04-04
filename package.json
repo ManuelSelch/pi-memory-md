@@ -45,6 +45,7 @@
   "files": [
     "memory-md.ts",
     "tools.ts",
+    "tape",
     "skills",
     "README.md",
     "CHANGELOG.md",
