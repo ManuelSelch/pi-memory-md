@@ -347,9 +347,10 @@ function buildMemoryContext(settings: MemoryMdSettings, ctx: ExtensionContext): 
  * Main extension initialization.
  *
  * Lifecycle:
- * 1. session_start: Start async sync (non-blocking), build memory context
- * 2. session_switch: Handle /new and /resume commands, rebuild memory context for new session
- * 3. before_agent_start: Wait for sync, then inject memory on first agent turn
+ * 1. session_start: Handle all session transitions with event.reason:
+ *    - startup/reload/resume: Show notification, auto-sync
+ *    - new/fork: Show notification, no auto-sync (same project, already synced)
+ * 2. before_agent_start: Wait for sync, then inject memory on first agent turn
  * 4. Register tools and commands for memory operations
  *
  * Memory injection modes:
@@ -409,15 +410,19 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
     return true;
   }
 
-  pi.on("session_start", async (_event, ctx) => {
-    initMemoryContext(ctx, { showNotification: true, autoSync: true });
-  });
+  pi.on("session_start", async (event, ctx) => {
+    // https://github.com/badlogic/pi-mono/releases/tag/v0.65.0
+    // Removed extension post-transition events session_switch and session_fork. Use session_start with event.reason ("startup" | "reload" | "new" | "resume" | "fork"). For "new", "resume", and "fork", session_start includes previousSessionFile.
+    // I like this new uniform logic event.reason: "startup" | "reload" | "new" | "resume" | "fork"
+    // It's better than session_switch and session_fork!
 
-  pi.on("session_switch", async (event, ctx) => {
-    if (event.reason !== "new") {
-      return;
+    if (event.reason === "new" || event.reason === "fork") {
+      // Clear any pending sync from previous session to avoid waiting for it
+      syncPromise = null;
+      initMemoryContext(ctx, { showNotification: true, autoSync: false });
+    } else {
+      initMemoryContext(ctx, { showNotification: true, autoSync: true });
     }
-    initMemoryContext(ctx, { showNotification: false, autoSync: false });
   });
 
   pi.on("before_agent_start", async (event, ctx) => {

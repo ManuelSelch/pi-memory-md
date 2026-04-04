@@ -1,6 +1,6 @@
 {
   "name": "pi-memory-md",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Letta-like memory management for pi using structured markdown files in a GitHub repository",
   "type": "module",
   "license": "MIT",
@@ -25,7 +25,7 @@
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "latest",
+    "@mariozechner/pi-coding-agent": "^0.65.0",
     "@rslint/tsgo": "^0.3.4",
     "@types/node": "^20.0.0",
     "husky": "^9.1.7",
