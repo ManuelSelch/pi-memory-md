@@ -2,7 +2,7 @@ import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import type { MemoryTapeService } from "./tape-service.js";
-import { formatEntriesAsMessages, type TapeMessage } from "./tape-selector.js";
+import { formatEntriesAsMessages } from "./tape-selector.js";
 
 type RenderState = { expanded: boolean; isPartial: boolean };
 
@@ -151,7 +151,10 @@ export function registerTapeInfo(
 
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       const info = tapeService.getInfo();
-      const lastAnchorName = info.lastAnchor ? (info.lastAnchor.payload.name as string) ?? info.lastAnchor.kind : "none";
+      const lastAnchorName = info.lastAnchor
+        ? (info.lastAnchor.payload.name as string) ?? info.lastAnchor.kind
+        : "none";
+      const tapeFileCount = tapeService.getTapeFileCount();
 
       const recommendation =
         info.entriesSinceLastAnchor > 20
@@ -162,6 +165,7 @@ export function registerTapeInfo(
 
       const summary = [
         `📊 Tape Information:`,
+        `  Tape files: ${tapeFileCount}`,
         `  Total entries: ${info.totalEntries}`,
         `  Anchors: ${info.anchorCount}`,
         `  Last anchor: ${lastAnchorName}`,
@@ -173,6 +177,7 @@ export function registerTapeInfo(
       return {
         content: [{ type: "text", text: summary }],
         details: {
+          tapeFileCount,
           totalEntries: info.totalEntries,
           anchorCount: info.anchorCount,
           lastAnchor: info.lastAnchor?.id,
@@ -289,7 +294,9 @@ export function registerTapeReset(
       tapeService.clear();
       tapeService.recordSessionStart();
 
-      const summary = archive ? "Tape archived and reset with new session/start anchor" : "Tape reset with new session/start anchor";
+      const summary = archive
+        ? "Tape archived and reset with new session/start anchor"
+        : "Tape reset with new session/start anchor";
 
       return {
         content: [{ type: "text", text: summary }],
@@ -349,12 +356,12 @@ export function registerTapeRead(
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
       const {
         afterAnchor,
-        lastAnchor = false,
         betweenAnchors,
         betweenDates,
-        query,
         kinds,
+        lastAnchor = false,
         limit = 20,
+        query,
       } = params as {
         afterAnchor?: string;
         lastAnchor?: boolean;
@@ -399,7 +406,9 @@ export function registerTapeRead(
       }
 
       const messages = formatEntriesAsMessages(entries);
-      const summary = `Retrieved ${messages.length} messages from tape:\n\n` + messages.map((m) => `${m.role}: ${m.content.slice(0, 100)}${m.content.length > 100 ? "..." : ""}`).join("\n");
+      const summary =
+        `Retrieved ${messages.length} messages from tape:\n\n` +
+        messages.map((m) => `${m.role}: ${m.content.slice(0, 100)}${m.content.length > 100 ? "..." : ""}`).join("\n");
 
       return {
         content: [{ type: "text", text: summary }],

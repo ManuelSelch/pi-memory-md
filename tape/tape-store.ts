@@ -5,6 +5,8 @@ import { getLocalPath } from "../memory-md.js";
 
 export class MemoryTapeStore {
   private tapePath: string;
+  private tapeDir: string;
+  private projectName: string;
 
   constructor(
     private memoryDir: string,
@@ -12,18 +14,39 @@ export class MemoryTapeStore {
     projectName?: string,
     sessionId?: string,
   ) {
-    const tapeDir = customTapePath || path.join(getLocalPath(), "TAPE");
-    fs.mkdirSync(tapeDir, { recursive: true });
+    this.tapeDir = customTapePath ?? path.join(getLocalPath(), "TAPE");
+    fs.mkdirSync(this.tapeDir, { recursive: true });
 
-    const name = projectName || path.basename(memoryDir);
-    const sid = sessionId || process.env.PI_SESSION_ID || "unknown";
-    this.tapePath = path.join(tapeDir, `${name}__${sid}.jsonl`);
+    this.projectName = projectName ?? path.basename(memoryDir);
+    const sid = sessionId ?? "unknown";
+    this.tapePath = path.join(this.tapeDir, `${this.projectName}__${sid}.jsonl`);
   }
 
 
 
   append(entry: TapeEntry): void {
     fs.appendFileSync(this.tapePath, JSON.stringify(entry) + "\n", "utf-8");
+  }
+
+  private loadAllEntries(): TapeEntry[] {
+    if (!fs.existsSync(this.tapeDir)) return [];
+
+    const allEntries: TapeEntry[] = [];
+    const jsonlFiles = fs.readdirSync(this.tapeDir).filter(
+      (f) => f.endsWith(".jsonl") && f.startsWith(`${this.projectName}__`)
+    );
+
+    for (const file of jsonlFiles) {
+      const filePath = path.join(this.tapeDir, file);
+      const content = fs.readFileSync(filePath, "utf-8");
+      const lines = content.split("\n").filter(Boolean);
+      const entries = lines.map((line) => this.parseEntry(line)).filter(Boolean) as TapeEntry[];
+      allEntries.push(...entries);
+    }
+
+    return allEntries.sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
   }
 
   query(options: {
@@ -36,15 +59,8 @@ export class MemoryTapeStore {
     betweenAnchors?: { start: string; end: string };
     betweenDates?: { start: string; end: string };
   }): TapeEntry[] {
-    if (!fs.existsSync(this.tapePath)) {
-      return [];
-    }
-
-    const content = fs.readFileSync(this.tapePath, "utf-8");
-    const lines = content.split("\n").filter(Boolean);
-
-    let entries = lines.map((line) => this.parseEntry(line)).filter(Boolean) as TapeEntry[];
-    const { sinceAnchor, lastAnchor, betweenAnchors, betweenDates, query, kinds, limit, since } = options;
+    let entries = this.loadAllEntries();
+    const { betweenAnchors, betweenDates, kinds, lastAnchor, limit, query, since, sinceAnchor } = options;
     const sinceTime = since ? new Date(since).getTime() : 0;
 
     if (betweenAnchors) {
@@ -76,7 +92,7 @@ export class MemoryTapeStore {
       entries = entries.filter((entry) =>
         JSON.stringify({ kind: entry.kind, date: entry.timestamp, payload: entry.payload, meta: entry })
           .toLowerCase()
-          .includes(needle),
+          .includes(needle)
       );
     }
 
@@ -123,19 +139,31 @@ export class MemoryTapeStore {
   }
 
   getLastAnchor(): TapeEntry | null {
-    const entries = this.query({ kinds: ["session/start", "anchor"], limit: 1 });
-    if (entries.length === 0) return null;
-    return entries[entries.length - 1];
+    const entries = this.query({ kinds: ["session/start", "anchor"] });
+    return entries.at(-1) ?? null;
   }
 
   findAnchorByName(name: string): TapeEntry | null {
     const entries = this.query({ kinds: ["anchor", "session/start"] });
-    return entries.find((e) => e.payload.name === name) || null;
+    return entries.find((e) => e.payload.name === name) ?? null;
   }
 
   clear(): void {
-    if (fs.existsSync(this.tapePath)) {
-      fs.unlinkSync(this.tapePath);
-    }
+    if (fs.existsSync(this.tapePath)) fs.unlinkSync(this.tapePath);
+  }
+
+  getTapeFileCount(): number {
+    return this.getAllTapeFiles().length;
+  }
+
+  getAllTapeFiles(): string[] {
+    if (!fs.existsSync(this.tapeDir)) return [];
+    return fs.readdirSync(this.tapeDir).filter(
+      (f) => f.endsWith(".jsonl") && f.startsWith(`${this.projectName}__`)
+    );
+  }
+
+  getTapeDir(): string {
+    return this.tapeDir;
   }
 }

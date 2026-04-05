@@ -27,7 +27,6 @@ export interface TapeEntry {
   timestamp: string;
   turn?: number; // Track conversation turn
   payload: Record<string, unknown>;
-  hash?: string; // Content hash for duplicate detection
 }
 
 export interface TapeQueryOptions {
@@ -50,7 +49,6 @@ export interface ContextSelection {
 
 export interface TapeConfig {
   tapePath?: string;
-  enableDuplicateDetection?: boolean;
   context?: {
     strategy: TapeContextStrategy; // "smart" (default) or "recent-only"
     fileLimit?: number; // Max files to inject (default: 10)

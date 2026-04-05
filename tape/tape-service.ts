@@ -1,15 +1,13 @@
-import { randomUUID, createHash } from "node:crypto";
-import type { TapeEntry, TapeEntryKind, TapeConfig } from "./tape-types.js";
+import { randomUUID } from "node:crypto";
+import type { TapeConfig, TapeEntry, TapeEntryKind } from "./tape-types.js";
 import { MemoryTapeStore } from "./tape-store.js";
 
 export class MemoryTapeService {
   private currentTurn = 0;
-  private contentHashes = new Set<string>();
 
   constructor(
     private store: MemoryTapeStore,
     private alwaysInclude: Set<string>,
-    private enableDuplicateDetection: boolean,
     private sessionId?: string,
   ) {}
 
@@ -21,50 +19,24 @@ export class MemoryTapeService {
   ): MemoryTapeService {
     const store = new MemoryTapeStore(memoryDir, config?.tapePath, workspace, sessionId);
     const alwaysInclude = new Set(config?.context?.alwaysInclude ?? []);
-    const enableDuplicateDetection = config?.enableDuplicateDetection ?? true;
-    return new MemoryTapeService(store, alwaysInclude, enableDuplicateDetection, sessionId);
+    return new MemoryTapeService(store, alwaysInclude, sessionId);
   }
 
   record(kind: TapeEntryKind, payload: Record<string, unknown>, turn?: number): string {
-    const content = JSON.stringify(payload);
-    const hash = this.enableDuplicateDetection ? this.computeHash(content) : undefined;
-
     const entry: TapeEntry = {
       id: randomUUID(),
       kind,
       timestamp: new Date().toISOString(),
       turn,
       payload,
-      hash,
     };
     this.store.append(entry);
-
-    if (hash) {
-      this.contentHashes.add(hash);
-    }
-
     return entry.id;
-  }
-
-  private computeHash(content: string): string {
-    return createHash("sha256").update(content).digest("hex");
-  }
-
-  isDuplicate(content: string): boolean {
-    if (!this.enableDuplicateDetection) return false;
-    return this.contentHashes.has(this.computeHash(content));
-  }
-
-  resetContentHashes(): void {
-    this.contentHashes.clear();
   }
 
   recordSessionStart(): string {
     this.currentTurn = 0;
-    this.resetContentHashes();
-    return this.record("session/start", {
-      sessionId: this.sessionId ?? "unknown",
-    });
+    return this.record("session/start", { sessionId: this.sessionId ?? "unknown" });
   }
 
   startNewTurn(): void {
@@ -88,14 +60,12 @@ export class MemoryTapeService {
   }
 
   createAnchor(name: string, state?: Record<string, unknown>): string {
-    this.resetContentHashes();
-    return this.record("anchor", { anchorId: randomUUID(), name, state: state ?? {} });
+    return this.record("anchor", { anchorId: randomUUID(), name, state: state ?? null });
   }
 
   clear(): void {
     this.store.clear();
     this.currentTurn = 0;
-    this.resetContentHashes();
   }
 
   recordMemoryRead(path: string): void {
@@ -133,7 +103,7 @@ export class MemoryTapeService {
 
   findAnchorByName(name: string): TapeEntry | null {
     const entries = this.store.query({ kinds: ["anchor", "session/start"] });
-    return entries.find((e) => e.payload.name === name) ?? null;
+    return entries.find((e) => e.payload.name === name) || null;
   }
 
   getEntriesAfterLastAnchor(): TapeEntry[] {
@@ -179,9 +149,8 @@ export class MemoryTapeService {
     const entries = this.query({});
     const anchors = entries.filter((e) => e.kind === "anchor" || e.kind === "session/start");
     const lastAnchor = anchors.at(-1) ?? null;
-    const entriesSinceLastAnchor = lastAnchor
-      ? entries.length - entries.indexOf(lastAnchor) - 1
-      : entries.length;
+    const lastAnchorIdx = lastAnchor ? entries.indexOf(lastAnchor) : -1;
+    const entriesSinceLastAnchor = lastAnchorIdx >= 0 ? entries.length - lastAnchorIdx - 1 : entries.length;
 
     return {
       totalEntries: entries.length,
@@ -191,5 +160,9 @@ export class MemoryTapeService {
       memoryReads: entries.filter((e) => e.kind === "memory/read").length,
       memoryWrites: entries.filter((e) => e.kind === "memory/write").length,
     };
+  }
+
+  getTapeFileCount(): number {
+    return this.store.getTapeFileCount();
   }
 }
