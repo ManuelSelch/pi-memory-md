@@ -261,7 +261,7 @@ In both cases, tape:
         "mode": "threshold",
         "threshold": 5
      },
-     
+
       // Custom tape storage path (optional)
       // If not set, uses: {localPath}/TAPE or ~/.pi/memory-md/TAPE
       "tapePath": "/custom/path/to/tape"

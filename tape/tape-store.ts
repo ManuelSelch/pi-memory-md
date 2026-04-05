@@ -7,7 +7,7 @@ export class MemoryTapeStore {
   private tapePath: string;
 
   constructor(
-    memoryDir: string,
+    private memoryDir: string,
     customTapePath?: string,
     projectName?: string,
     sessionId?: string,
@@ -44,31 +44,22 @@ export class MemoryTapeStore {
     const lines = content.split("\n").filter(Boolean);
 
     let entries = lines.map((line) => this.parseEntry(line)).filter(Boolean) as TapeEntry[];
-    const { sinceAnchor, lastAnchor, betweenAnchors, betweenDates, query, kinds, limit } = options;
-    const sinceTime = options.since ? new Date(options.since).getTime() : 0;
+    const { sinceAnchor, lastAnchor, betweenAnchors, betweenDates, query, kinds, limit, since } = options;
+    const sinceTime = since ? new Date(since).getTime() : 0;
 
     if (betweenAnchors) {
       const startIdx = this.findAnchorIndex(entries, betweenAnchors.start);
       const endIdx = this.findAnchorIndex(entries, betweenAnchors.end, startIdx + 1);
-      if (startIdx >= 0 && endIdx >= 0) {
-        entries = entries.slice(startIdx + 1, endIdx);
-      } else {
-        return [];
-      }
+      if (startIdx < 0 || endIdx < 0) return [];
+      entries = entries.slice(startIdx + 1, endIdx);
     } else if (lastAnchor) {
       const lastAnchorIdx = this.findLastAnchorIndex(entries);
-      if (lastAnchorIdx >= 0) {
-        entries = entries.slice(lastAnchorIdx + 1);
-      } else {
-        return [];
-      }
+      if (lastAnchorIdx < 0) return [];
+      entries = entries.slice(lastAnchorIdx + 1);
     } else if (sinceAnchor) {
       const anchorIdx = this.findAnchorIndex(entries, sinceAnchor);
-      if (anchorIdx >= 0) {
-        entries = entries.slice(anchorIdx + 1);
-      } else {
-        return [];
-      }
+      if (anchorIdx < 0) return [];
+      entries = entries.slice(anchorIdx + 1);
     }
 
     if (betweenDates) {
@@ -82,15 +73,11 @@ export class MemoryTapeStore {
 
     if (query) {
       const needle = query.toLowerCase();
-      entries = entries.filter((entry) => {
-        const haystack = JSON.stringify({
-          kind: entry.kind,
-          date: entry.timestamp,
-          payload: entry.payload,
-          meta: entry,
-        }).toLowerCase();
-        return haystack.includes(needle);
-      });
+      entries = entries.filter((entry) =>
+        JSON.stringify({ kind: entry.kind, date: entry.timestamp, payload: entry.payload, meta: entry })
+          .toLowerCase()
+          .includes(needle),
+      );
     }
 
     if (kinds) {
@@ -108,12 +95,11 @@ export class MemoryTapeStore {
     return entries;
   }
 
-  private findAnchorIndex(entries: TapeEntry[], name: string, start: number = 0): number {
+  private findAnchorIndex(entries: TapeEntry[], name: string, start = 0): number {
     for (let i = start; i < entries.length; i++) {
-      if (entries[i].kind === "anchor" || entries[i].kind === "session/start") {
-        if ((entries[i].payload.name as string) === name) {
-          return i;
-        }
+      const entry = entries[i];
+      if ((entry.kind === "anchor" || entry.kind === "session/start") && entry.payload.name === name) {
+        return i;
       }
     }
     return -1;
@@ -144,7 +130,7 @@ export class MemoryTapeStore {
 
   findAnchorByName(name: string): TapeEntry | null {
     const entries = this.query({ kinds: ["anchor", "session/start"] });
-    return entries.find((e) => (e.payload.name as string) === name) || null;
+    return entries.find((e) => e.payload.name === name) || null;
   }
 
   clear(): void {

@@ -19,9 +19,10 @@ function renderCollapsed(theme: Theme, summary: string): Text {
 }
 
 function renderExpanded(theme: Theme, content: unknown): Text {
-  const text = content && typeof content === "object" && "type" in content && content.type === "text" && "text" in content
-    ? (content as { text: string }).text
-    : "";
+  const text =
+    content && typeof content === "object" && "type" in content && content.type === "text" && "text" in content
+      ? (content as { text: string }).text
+      : "";
   return renderText(theme.fg("toolOutput", text));
 }
 
@@ -69,15 +70,13 @@ export function registerTapeHandoff(
     },
 
     renderCall(args, theme) {
-      return renderText(
-        theme.fg("toolTitle", theme.bold("tape_handoff ")) +
-        theme.fg("accent", args.name)
-      );
+      return renderText(theme.fg("toolTitle", theme.bold("tape_handoff ")) + theme.fg("accent", args.name));
     },
 
     renderResult(result, { isPartial, expanded }: RenderState, theme) {
       if (isPartial) return renderPartial(theme, "Creating anchor...");
-      if (!expanded) return renderCollapsed(theme, (result.details as { name?: string })?.name || "Anchor created");
+      if (!expanded)
+        return renderCollapsed(theme, (result.details as { name?: string })?.name ?? "Anchor created");
       return renderExpanded(theme, result.content[0]);
     },
   });
@@ -105,20 +104,21 @@ export function registerTapeAnchors(
 
       const anchors = entries.map((entry) => ({
         id: entry.id,
-        name: (entry.payload.name as string) || "unnamed",
+        name: (entry.payload.name as string) ?? "unnamed",
         timestamp: entry.timestamp,
-        state: (entry.payload.state as Record<string, unknown>) || {},
+        state: (entry.payload.state as Record<string, unknown>) ?? {},
       }));
 
-      const summary = anchors.length === 0
-        ? "No anchors found in tape. Use tape_handoff to create an anchor."
-        : `Found ${anchors.length} anchor(s):\n\n` +
-          anchors.map((a) => {
-            const stateStr = Object.keys(a.state).length > 0
-              ? `\n  State: ${JSON.stringify(a.state)}`
-              : "";
-            return `  - ${a.name} (${new Date(a.timestamp).toLocaleString()})${stateStr}`;
-          }).join("\n");
+      const summary =
+        anchors.length === 0
+          ? "No anchors found in tape. Use tape_handoff to create an anchor."
+          : `Found ${anchors.length} anchor(s):\n\n` +
+            anchors
+              .map((a) => {
+                const stateStr = Object.keys(a.state).length > 0 ? `\n  State: ${JSON.stringify(a.state)}` : "";
+                return `  - ${a.name} (${new Date(a.timestamp).toLocaleString()})${stateStr}`;
+              })
+              .join("\n");
 
       return {
         content: [{ type: "text", text: summary }],
@@ -127,8 +127,7 @@ export function registerTapeAnchors(
     },
 
     renderCall(args, theme) {
-      const text = theme.fg("toolTitle", theme.bold("tape_anchors")) +
-        (args.limit ? ` ${theme.fg("muted", `limit=${args.limit}`)}` : "");
+      const text = theme.fg("toolTitle", theme.bold("tape_anchors")) + (args.limit ? ` ${theme.fg("muted", `limit=${args.limit}`)}` : "");
       return renderText(text);
     },
 
@@ -152,15 +151,14 @@ export function registerTapeInfo(
 
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
       const info = tapeService.getInfo();
-      const lastAnchorName = info.lastAnchor
-        ? (info.lastAnchor.payload.name as string) || info.lastAnchor.kind
-        : "none";
+      const lastAnchorName = info.lastAnchor ? (info.lastAnchor.payload.name as string) ?? info.lastAnchor.kind : "none";
 
-      const recommendation = info.entriesSinceLastAnchor > 20
-        ? "\n\n💡 Recommendation: Context is getting large. Consider using tape_handoff to create a new checkpoint."
-        : info.entriesSinceLastAnchor > 10
-          ? "\n\n⚠️  Warning: Context is growing. You may want to use tape_handoff soon."
-          : "";
+      const recommendation =
+        info.entriesSinceLastAnchor > 20
+          ? "\n\n💡 Recommendation: Context is getting large. Consider using tape_handoff to create a new checkpoint."
+          : info.entriesSinceLastAnchor > 10
+            ? "\n\n⚠️  Warning: Context is growing. You may want to use tape_handoff soon."
+            : "";
 
       const summary = [
         `📊 Tape Information:`,
@@ -238,11 +236,7 @@ export function registerTapeSearch(
         sinceAnchor?: string;
       };
 
-      const entries = tapeService.query({
-        kinds: kinds as any,
-        limit,
-        sinceAnchor,
-      });
+      const entries = tapeService.query({ kinds: kinds as any, limit, sinceAnchor });
 
       const summary = [
         `Tape search results: ${entries.length} match(es)`,
@@ -263,8 +257,7 @@ export function registerTapeSearch(
     },
 
     renderCall(args, theme) {
-      const text = theme.fg("toolTitle", theme.bold("tape_search")) +
-        (args.kinds ? ` ${theme.fg("muted", args.kinds.join(","))}` : "");
+      const text = theme.fg("toolTitle", theme.bold("tape_search")) + (args.kinds ? ` ${theme.fg("muted", args.kinds.join(","))}` : "");
       return renderText(text);
     },
 
@@ -296,9 +289,7 @@ export function registerTapeReset(
       tapeService.clear();
       tapeService.recordSessionStart();
 
-      const summary = archive
-        ? "Tape archived and reset with new session/start anchor"
-        : "Tape reset with new session/start anchor";
+      const summary = archive ? "Tape archived and reset with new session/start anchor" : "Tape reset with new session/start anchor";
 
       return {
         content: [{ type: "text", text: summary }],
@@ -307,15 +298,14 @@ export function registerTapeReset(
     },
 
     renderCall(args, theme) {
-      const text = theme.fg("toolTitle", theme.bold("tape_reset")) +
-        (args.archive ? ` ${theme.fg("warning", "--archive")}` : "");
+      const text = theme.fg("toolTitle", theme.bold("tape_reset")) + (args.archive ? ` ${theme.fg("warning", "--archive")}` : "");
       return renderText(text);
     },
 
     renderResult(result, { isPartial }: RenderState, theme) {
       if (isPartial) return renderPartial(theme, "Resetting...");
       const content = result.content[0] as { type: string; text: string } | undefined;
-      return renderText(theme.fg("success", content?.text || ""));
+      return renderText(theme.fg("success", content?.text ?? ""));
     },
   });
 }
@@ -385,25 +375,14 @@ export function registerTapeRead(
             details: { error: "One or both anchors not found" },
           };
         }
-        entries = tapeService.query({
-          sinceAnchor: startAnchor.id,
-          kinds: kinds as any,
-          limit,
-        });
+        entries = tapeService.query({ sinceAnchor: startAnchor.id, kinds: kinds as any, limit });
         const endAnchorEntries = tapeService.query({ sinceAnchor: endAnchor.id, limit: 1 });
         if (endAnchorEntries.length > 0) {
           const endIdx = entries.findIndex((e) => e.id === endAnchor.id);
-          if (endIdx >= 0) {
-            entries = entries.slice(0, endIdx);
-          }
+          if (endIdx >= 0) entries = entries.slice(0, endIdx);
         }
       } else if (betweenDates) {
-        entries = tapeService.query({
-          betweenDates,
-          query,
-          kinds: kinds as any,
-          limit,
-        });
+        entries = tapeService.query({ betweenDates, query, kinds: kinds as any, limit });
       } else if (afterAnchor) {
         const anchor = tapeService.findAnchorByName(afterAnchor);
         if (!anchor) {
@@ -412,30 +391,15 @@ export function registerTapeRead(
             details: { error: "Anchor not found" },
           };
         }
-        entries = tapeService.query({
-          sinceAnchor: anchor.id,
-          query,
-          kinds: kinds as any,
-          limit,
-        });
+        entries = tapeService.query({ sinceAnchor: anchor.id, query, kinds: kinds as any, limit });
       } else if (lastAnchor) {
-        entries = tapeService.query({
-          lastAnchor: true,
-          query,
-          kinds: kinds as any,
-          limit,
-        });
+        entries = tapeService.query({ lastAnchor: true, query, kinds: kinds as any, limit });
       } else {
-        entries = tapeService.query({
-          query,
-          kinds: kinds as any,
-          limit,
-        });
+        entries = tapeService.query({ query, kinds: kinds as any, limit });
       }
 
       const messages = formatEntriesAsMessages(entries);
-      const summary = `Retrieved ${messages.length} messages from tape:\n\n` +
-        messages.map((m) => `${m.role}: ${m.content.slice(0, 100)}${m.content.length > 100 ? "..." : ""}`).join("\n");
+      const summary = `Retrieved ${messages.length} messages from tape:\n\n` + messages.map((m) => `${m.role}: ${m.content.slice(0, 100)}${m.content.length > 100 ? "..." : ""}`).join("\n");
 
       return {
         content: [{ type: "text", text: summary }],

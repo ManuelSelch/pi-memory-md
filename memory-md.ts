@@ -458,7 +458,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
       const memoryDir = getMemoryDir(settings, ctx);
       const projectName = path.basename(ctx.cwd);
       const sessionId = ctx.sessionManager.getSessionId();
-      tapeService = new MemoryTapeService(memoryDir, settings.tape, projectName, sessionId);
+      tapeService = MemoryTapeService.create(memoryDir, settings.tape, projectName, sessionId);
       contextSelector = new MemoryFileSelector(tapeService, memoryDir);
       tapeContextSelector = new ConversationSelector(tapeService, settings.tape);
       tapeService.recordSessionStart();

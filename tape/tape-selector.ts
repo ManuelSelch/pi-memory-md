@@ -14,7 +14,7 @@ export interface TapeMessage {
 
 export function formatEntriesAsMessages(entries: TapeEntry[]): TapeMessage[] {
   const messages: TapeMessage[] = [];
-  const pendingToolCalls: Map<string, { id: string; function: { name: string; arguments: string } }> = new Map();
+  const pendingToolCalls = new Map<string, { id: string; function: { name: string; arguments: string } }>();
 
   for (const entry of entries) {
     switch (entry.kind) {
@@ -44,13 +44,10 @@ export function formatEntriesAsMessages(entries: TapeEntry[]): TapeMessage[] {
       case "tool_call": {
         const tool = entry.payload.tool as string;
         const args = entry.payload.args as Record<string, unknown>;
-        const callId = (entry.payload.callId as string) || `call_${Date.now()}`;
+        const callId = (entry.payload.callId as string) ?? `call_${Date.now()}`;
         pendingToolCalls.set(callId, {
           id: callId,
-          function: {
-            name: tool,
-            arguments: JSON.stringify(args),
-          },
+          function: { name: tool, arguments: JSON.stringify(args) },
         });
         break;
       }
@@ -58,44 +55,34 @@ export function formatEntriesAsMessages(entries: TapeEntry[]): TapeMessage[] {
       case "tool_result": {
         const result = entry.payload.result;
         const callId = entry.payload.callId as string;
-        let content = "";
-        if (typeof result === "string") {
-          content = result;
-        } else {
-          content = JSON.stringify(result);
+        const content = typeof result === "string" ? result : JSON.stringify(result);
+
+        if (callId) {
+          const call = pendingToolCalls.get(callId);
+          if (call) {
+            messages.push({
+              role: "assistant",
+              content: "",
+              tool_call_id: callId,
+              name: call.function.name,
+            });
+            pendingToolCalls.delete(callId);
+          }
         }
-        if (callId && pendingToolCalls.has(callId)) {
-          const call = pendingToolCalls.get(callId)!;
-          messages.push({
-            role: "assistant",
-            content: "",
-            tool_call_id: callId,
-            name: call.function.name,
-          });
-          pendingToolCalls.delete(callId);
-        }
-        messages.push({
-          role: "tool",
-          content: content.slice(0, 5000),
-        });
+
+        messages.push({ role: "tool", content: content.slice(0, 5000) });
         break;
       }
 
       case "memory/read": {
         const entryPath = entry.payload.path as string;
-        messages.push({
-          role: "assistant",
-          content: `[Memory Read] ${entryPath}`,
-        });
+        messages.push({ role: "assistant", content: `[Memory Read] ${entryPath}` });
         break;
       }
 
       case "memory/write": {
         const entryPath = entry.payload.path as string;
-        messages.push({
-          role: "assistant",
-          content: `[Memory Write] ${entryPath}`,
-        });
+        messages.push({ role: "assistant", content: `[Memory Write] ${entryPath}` });
         break;
       }
 
@@ -140,7 +127,7 @@ export class ConversationSelector {
   }
 
   private filterCoreEntries(entries: TapeEntry[]): TapeEntry[] {
-    return entries.filter((e) => this.CORE_ENTRY_KINDS.includes(e.kind as typeof this.CORE_ENTRY_KINDS[number]));
+    return entries.filter((e) => this.CORE_ENTRY_KINDS.includes(e.kind as never));
   }
 
   selectFromAnchor(anchorId?: string): TapeEntry[] {
@@ -157,14 +144,14 @@ export class ConversationSelector {
       switch (entry.kind) {
         case "message/user": {
           const content = entry.payload.content as string;
-          const truncated = content.length > 80 ? content.slice(0, 80) + "..." : content;
+          const truncated = content.length > 80 ? `${content.slice(0, 80)}...` : content;
           lines.push(`User: ${truncated}`);
           break;
         }
 
         case "message/assistant": {
           const content = entry.payload.content as string;
-          const truncated = content.length > 80 ? content.slice(0, 80) + "..." : content;
+          const truncated = content.length > 80 ? `${content.slice(0, 80)}...` : content;
           lines.push(`Assistant: ${truncated}`);
           break;
         }
@@ -205,16 +192,13 @@ export class ConversationSelector {
 
         case "anchor":
         case "session/start":
-          lines.push(`-- Anchor: ${entry.payload.name || "checkpoint"} --`);
+          lines.push(`-- Anchor: ${entry.payload.name ?? "checkpoint"} --`);
           break;
       }
     }
 
-    if (lines.length === 0) {
-      return "";
-    }
-
-    return lines.join("\n") + "\n\n---\n";
+    if (lines.length === 0) return "";
+    return `${lines.join("\n")}\n\n---\n`;
   }
 
   private filterByTokenBudget(entries: TapeEntry[]): TapeEntry[] {
@@ -257,12 +241,8 @@ export class MemoryFileSelector {
     const paths = new Set<string>();
     for (const entry of memoryEntries.reverse()) {
       const entryPath = entry.payload.path as string;
-      if (entryPath) {
-        paths.add(entryPath);
-      }
-      if (paths.size >= limit) {
-        break;
-      }
+      if (entryPath) paths.add(entryPath);
+      if (paths.size >= limit) break;
     }
 
     return Array.from(paths);
@@ -270,18 +250,13 @@ export class MemoryFileSelector {
 
   selectSmart(limit: number): string[] {
     const anchor = this.tapeService.getLastAnchor();
-    const entries = this.tapeService.query({
-      sinceAnchor: anchor?.id,
-    });
-
+    const entries = this.tapeService.query({ sinceAnchor: anchor?.id });
     const pathStats = this.analyzePathAccess(entries);
     const sortedPaths = this.sortPathsByStats(pathStats);
     const selected = new Set(this.tapeService.getAlwaysInclude());
 
     for (const entryPath of sortedPaths) {
-      if (selected.size >= limit) {
-        break;
-      }
+      if (selected.size >= limit) break;
       selected.add(entryPath);
     }
 
@@ -292,16 +267,12 @@ export class MemoryFileSelector {
     const pathStats = new Map<string, { count: number; lastAccess: number }>();
 
     for (const entry of entries) {
-      if (entry.kind !== "memory/read" && entry.kind !== "memory/write") {
-        continue;
-      }
+      if (entry.kind !== "memory/read" && entry.kind !== "memory/write") continue;
 
       const entryPath = entry.payload.path as string;
-      if (!entryPath) {
-        continue;
-      }
+      if (!entryPath) continue;
 
-      const stats = pathStats.get(entryPath) || { count: 0, lastAccess: 0 };
+      const stats = pathStats.get(entryPath) ?? { count: 0, lastAccess: 0 };
       stats.count++;
       stats.lastAccess = Math.max(stats.lastAccess, new Date(entry.timestamp).getTime());
       pathStats.set(entryPath, stats);
@@ -324,16 +295,11 @@ export class MemoryFileSelector {
   }
 
   selectFilesForContext(strategy: "recent-only" | "smart", limit: number): string[] {
-    if (strategy === "recent-only") {
-      return this.selectRecentOnly(limit);
-    }
-    return this.selectSmart(limit);
+    return strategy === "recent-only" ? this.selectRecentOnly(limit) : this.selectSmart(limit);
   }
 
   buildContextFromFiles(filePaths: string[]): string {
-    if (filePaths.length === 0) {
-      return "";
-    }
+    if (filePaths.length === 0) return "";
 
     const lines = [
       "# Project Memory",
@@ -367,7 +333,7 @@ export class MemoryFileSelector {
       const descMatch = frontmatter.match(/description:\s*(.+)/);
       const tagMatch = frontmatter.match(/tags:\s*\[(.*?)\]/);
 
-      const description = descMatch ? descMatch[1].replace(/[']/g, "").trim() : "No description";
+      const description = descMatch ? descMatch[1].replace(/'/g, "").trim() : "No description";
       const tags = tagMatch ? this.parseTags(tagMatch[1]) : "none";
 
       return { description, tags };
@@ -379,9 +345,8 @@ export class MemoryFileSelector {
   private parseTags(tagString: string): string {
     return tagString
       .split(",")
-      .map((t) => t.trim().replace(/[']/g, ""))
+      .map((t) => t.trim().replace(/'/g, ""))
       .filter(Boolean)
       .join(", ") || "none";
   }
-
 }

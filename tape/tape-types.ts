@@ -41,7 +41,7 @@ export interface TapeQueryOptions {
   betweenDates?: { start: string; end: string }; // Get entries between two dates (ISO format)
 }
 
-export type ContextStrategy = "recent-only" | "smart";
+export type ContextStrategy = TapeContextStrategy;
 
 export interface ContextSelection {
   files: string[];

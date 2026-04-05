@@ -3,21 +3,25 @@ import type { TapeEntry, TapeEntryKind, TapeConfig } from "./tape-types.js";
 import { MemoryTapeStore } from "./tape-store.js";
 
 export class MemoryTapeService {
-  private store: MemoryTapeStore;
-  private alwaysInclude: Set<string>;
-  private currentTurn: number = 0;
-  private contentHashes: Set<string> = new Set();
-  private enableDuplicateDetection: boolean;
+  private currentTurn = 0;
+  private contentHashes = new Set<string>();
 
   constructor(
+    private store: MemoryTapeStore,
+    private alwaysInclude: Set<string>,
+    private enableDuplicateDetection: boolean,
+  ) {}
+
+  static create(
     memoryDir: string,
     config?: TapeConfig,
     workspace?: string,
     sessionId?: string,
-  ) {
-    this.store = new MemoryTapeStore(memoryDir, config?.tapePath, workspace, sessionId);
-    this.enableDuplicateDetection = config?.enableDuplicateDetection ?? true;
-    this.alwaysInclude = new Set(config?.context?.alwaysInclude || []);
+  ): MemoryTapeService {
+    const store = new MemoryTapeStore(memoryDir, config?.tapePath, workspace, sessionId);
+    const alwaysInclude = new Set(config?.context?.alwaysInclude ?? []);
+    const enableDuplicateDetection = config?.enableDuplicateDetection ?? true;
+    return new MemoryTapeService(store, alwaysInclude, enableDuplicateDetection);
   }
 
   record(kind: TapeEntryKind, payload: Record<string, unknown>, turn?: number): string {
@@ -46,11 +50,8 @@ export class MemoryTapeService {
   }
 
   isDuplicate(content: string): boolean {
-    if (!this.enableDuplicateDetection) {
-      return false;
-    }
-    const hash = this.computeHash(content);
-    return this.contentHashes.has(hash);
+    if (!this.enableDuplicateDetection) return false;
+    return this.contentHashes.has(this.computeHash(content));
   }
 
   resetContentHashes(): void {
@@ -61,7 +62,7 @@ export class MemoryTapeService {
     this.currentTurn = 0;
     this.resetContentHashes();
     return this.record("session/start", {
-      sessionId: process.env.PI_SESSION_ID || "unknown",
+      sessionId: process.env.PI_SESSION_ID ?? "unknown",
     });
   }
 
@@ -87,8 +88,7 @@ export class MemoryTapeService {
 
   createAnchor(name: string, state?: Record<string, unknown>): string {
     this.resetContentHashes();
-    const anchorId = randomUUID();
-    return this.record("anchor", { anchorId, name, state: state || {} });
+    return this.record("anchor", { anchorId: randomUUID(), name, state: state ?? {} });
   }
 
   clear(): void {
@@ -132,7 +132,7 @@ export class MemoryTapeService {
 
   findAnchorByName(name: string): TapeEntry | null {
     const entries = this.store.query({ kinds: ["anchor", "session/start"] });
-    return entries.find((e) => (e.payload.name as string) === name) || null;
+    return entries.find((e) => e.payload.name === name) ?? null;
   }
 
   getEntriesAfterLastAnchor(): TapeEntry[] {
@@ -177,12 +177,10 @@ export class MemoryTapeService {
   } {
     const entries = this.query({});
     const anchors = entries.filter((e) => e.kind === "anchor" || e.kind === "session/start");
-    const lastAnchor = anchors[anchors.length - 1] || null;
-    let entriesSinceLastAnchor = entries.length;
-
-    if (lastAnchor) {
-      entriesSinceLastAnchor = entries.length - entries.indexOf(lastAnchor) - 1;
-    }
+    const lastAnchor = anchors.at(-1) ?? null;
+    const entriesSinceLastAnchor = lastAnchor
+      ? entries.length - entries.indexOf(lastAnchor) - 1
+      : entries.length;
 
     return {
       totalEntries: entries.length,
