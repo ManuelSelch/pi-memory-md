@@ -1,6 +1,6 @@
 # pi-memory-md
 
-Letta-like memory management for [pi](https://github.com/badlogic/pi-mono) using GitHub-backed markdown files.
+Letta-like memory management for [pi](https://github.com/badlogic/pi-mono) using Git-backed markdown files.
 
 ## Features
 
@@ -25,7 +25,7 @@ pi install git:github.com/VandeeFeng/pi-memory-md
 {
   "pi-memory-md": {
     "enabled": true,
-    "repoUrl": "git@github.com:username/repo.git", // Or HTTPS format
+    "repoUrl": "git@github.com:username/repo.git", // or HTTPS format
     "localPath": "~/.pi/memory-md"
   }
 }
