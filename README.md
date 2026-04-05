@@ -193,9 +193,6 @@ The LLM automatically:
 - Writes new information when you ask to remember something
 - Syncs changes when needed
 
-## Reference
-- [Introducing Context Repositories: Git-based Memory for Coding Agents | Letta](https://www.letta.com/blog/context-repositories)
-
 ## Tape Mode (Dynamic Context Injection)
 
 > **Experimental**: This mode is under active development. APIs and behavior may change.
@@ -213,10 +210,10 @@ In both cases, tape:
 - Tracks all operations in an immutable tape (JSONL format): messages, tool calls, memory operations (by default)
 - **Anchor-based context**: Selects entries after the last anchor, then applies token/entry limits
   - `maxTapeTokens` (default: 1000): Max tokens for context
-  - `maxTapeEntries` (default: 10): Max entries to consider before token limit
+  - `maxTapeEntries` (default: 40): Max entries to consider before token limit
 - Creates checkpoints with `tape_handoff` to mark phase transitions
 - **Auto-anchor**: Automatically creates anchors when context grows too large
-  - `anchor.mode: "threshold"` (default): Creates anchor when entries exceed `anchor.threshold` (default: 5)
+  - `anchor.mode: "threshold"` (default): Creates anchor when entries exceed `anchor.threshold` (default: 15)
   - `anchor.mode: "hand"`: Manual only, use `tape_handoff` tool
 - **Pros**: Token-efficient, automatic context management with checkpoint management
 - **Cons**: Slightly more complex configuration
@@ -246,20 +243,20 @@ In both cases, tape:
         // Controls how much recent conversation context to include
         "maxTapeTokens": 1000,
 
-        // Maximum entries to consider before token limit (default: 10)
-        "maxTapeEntries": 10,
+        // Maximum entries to consider before token limit (default: 40)
+        "maxTapeEntries": 40,
 
         // Include conversation history in context (default: true)
         // Set to false to disable history and use memory files only
         "includeConversationHistory": false
       },
       "anchor": {
-        // Auto-anchor configuration (default: { mode: "threshold", threshold: 5 })
+        // Auto-anchor configuration (default: { mode: "threshold", threshold: 15 })
         // - mode: "hand" - Manual only, create anchors via tape_handoff tool
         // - mode: "threshold" - Create anchor when entries exceed threshold
         // - threshold: Number of entries since last anchor before auto-creating
         "mode": "threshold",
-        "threshold": 5
+        "threshold": 15
      },
 
       // Custom tape storage path (optional)
@@ -306,4 +303,10 @@ more details: https://tape.systems/
 | `tape_reset` | `{archive?: boolean}` | Reset the tape with new session/start anchor |
 
 > **Note**: Tape tools are automatically registered when `tape` is set to `true`. They provide anchor-based context management inspired by [bub](https://bub.build)'s tape mechanism.
+
+## Reference
+- [Introducing Context Repositories: Git-based Memory for Coding Agents | Letta](https://www.letta.com/blog/context-repositories)
+- https://tape.systems
+- https://bub.build/
+- https://github.com/bubbuild/bub/tree/main/src/bub
 

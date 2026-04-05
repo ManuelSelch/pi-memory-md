@@ -123,7 +123,7 @@ export class ConversationSelector {
   constructor(tapeService: MemoryTapeService, config?: TapeConfig) {
     this.tapeService = tapeService;
     this.maxTokens = config?.context?.maxTapeTokens ?? 1000;
-    this.maxEntries = config?.context?.maxTapeEntries ?? 10;
+    this.maxEntries = config?.context?.maxTapeEntries ?? 40;
   }
 
   private filterCoreEntries(entries: TapeEntry[]): TapeEntry[] {
@@ -256,11 +256,46 @@ export class MemoryFileSelector {
     const selected = new Set(this.tapeService.getAlwaysInclude());
 
     for (const entryPath of sortedPaths) {
-      if (selected.size >= limit) break;
       selected.add(entryPath);
+      if (selected.size >= limit) break;
+    }
+
+    if (selected.size === 0) {
+      for (const entryPath of this.scanMemoryDirectory(limit)) {
+        selected.add(entryPath);
+        if (selected.size >= limit) break;
+      }
     }
 
     return Array.from(selected);
+  }
+
+  private scanMemoryDirectory(limit: number): string[] {
+    const coreDir = path.join(this.memoryDir, "core");
+    if (!fs.existsSync(coreDir)) return [];
+
+    const paths: string[] = [];
+    const scanDir = (dir: string, base: string = ""): void => {
+      if (paths.length >= limit) return;
+
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (paths.length >= limit) break;
+        if (entry.name.startsWith(".")) continue;
+
+        const fullPath = path.join(dir, entry.name);
+        const relPath = base ? path.join(base, entry.name) : entry.name;
+
+        if (entry.isDirectory()) {
+          scanDir(fullPath, relPath);
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          paths.push(relPath);
+        }
+      }
+    };
+
+    scanDir(coreDir);
+    return paths;
   }
 
   private analyzePathAccess(entries: TapeEntry[]): Map<string, { count: number; lastAccess: number }> {
@@ -295,7 +330,8 @@ export class MemoryFileSelector {
   }
 
   selectFilesForContext(strategy: "recent-only" | "smart", limit: number): string[] {
-    return strategy === "recent-only" ? this.selectRecentOnly(limit) : this.selectSmart(limit);
+    if (strategy === "recent-only") return this.selectRecentOnly(limit);
+    return this.selectSmart(limit);
   }
 
   buildContextFromFiles(filePaths: string[]): string {
@@ -324,7 +360,6 @@ export class MemoryFileSelector {
     try {
       const content = fs.readFileSync(fullPath, "utf-8");
       const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-
       if (!frontmatterMatch) {
         return { description: "No description", tags: "none" };
       }
@@ -343,10 +378,11 @@ export class MemoryFileSelector {
   }
 
   private parseTags(tagString: string): string {
-    return tagString
+    const tags = tagString
       .split(",")
       .map((t) => t.trim().replace(/'/g, ""))
       .filter(Boolean)
-      .join(", ") || "none";
+      .join(", ");
+    return tags || "none";
   }
 }

@@ -537,15 +537,15 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
 
         // Step 2: After all recordings, check if we need to create a new anchor
         const info = tapeService.getInfo();
-        const anchorConfig = settings.tape?.anchor ?? { mode: "threshold", threshold: 5 };
+        const anchorConfig = settings.tape?.anchor ?? { mode: "threshold", threshold: 15 };
         
-        if (anchorConfig.mode === "threshold" && info.entriesSinceLastAnchor >= (anchorConfig.threshold ?? 5)) {
+        if (anchorConfig.mode === "threshold" && info.entriesSinceLastAnchor >= (anchorConfig.threshold ?? 15)) {
           tapeService.createAnchor("auto/threshold", { 
             reason: "Entries since last anchor exceeded threshold",
             entriesSinceLastAnchor: info.entriesSinceLastAnchor,
             threshold: anchorConfig.threshold
           });
-          ctx.ui.notify(`Auto-created anchor: ${info.entriesSinceLastAnchor} entries since last anchor`, "info");
+          ctx.ui.notify(`Auto-created anchor: ${info.entriesSinceLastAnchor} entries since last anchor (${info.anchorCount} anchors total)`, "info");
         }
       });
     }
@@ -613,18 +613,19 @@ Your conversation history is recorded in tape with anchors (checkpoints).
             };
           }
 
-          // In message-append mode, send as custom message
-          pi.sendMessage({
-            customType: "pi-memory-md-tape",
-            content: memoryContext + tapeHint,
-            display: false,
-          });
-
+          // In message-append mode, return as custom message
           memoryInjected = true;
           ctx.ui.notify(
             `Tape mode: ${fileCount} memory files injected (message-append)`,
             "info",
           );
+          return {
+            message: {
+              customType: "pi-memory-md-tape",
+              content: memoryContext + tapeHint,
+              display: false,
+            },
+          };
         }
       } catch (error) {
         console.error("Tape injection failed:", error);
