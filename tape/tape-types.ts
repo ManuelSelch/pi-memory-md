@@ -49,15 +49,18 @@ export interface ContextSelection {
 }
 
 export interface TapeConfig {
-  contextStrategy: TapeContextStrategy;
-  fileLimit: number;
-  alwaysInclude?: string[];
   tapePath?: string;
-  maxTapeTokens?: number; // Max tokens for tape context (default: 1000)
-  maxTapeEntries?: number; // Max entries to consider before token limit (default: 10)
   enableDuplicateDetection?: boolean;
-  maxConversationHistory?: number; // Maximum conversation entries to include (default: 5)
-  includeConversationHistory?: boolean; // Whether to include conversation history (default: true)
-  autoAnchor?: "never" | "turn" | "threshold"; // Auto-anchor strategy (default: "threshold")
-  anchorThreshold?: number; // Entries since last anchor before auto-creating (default: 5)
+  context?: {
+    strategy: TapeContextStrategy; // "smart" (default) or "recent-only"
+    fileLimit?: number; // Max files to inject (default: 10)
+    alwaysInclude?: string[]; // Files to always include (default: [])
+    maxTapeTokens?: number; // Max tokens for tape context (default: 1000)
+    maxTapeEntries?: number; // Max entries to consider before token limit (default: 10)
+    includeConversationHistory?: boolean; // Include conversation history (default: true)
+  };
+  anchor?: {
+    mode: "hand" | "threshold"; // Auto-anchor strategy (default: "threshold")
+    threshold?: number; // Entries since last anchor before auto-creating (default: 5)
+  };
 }

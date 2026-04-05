@@ -34,12 +34,12 @@ export interface MemoryMdSettings {
   autoSync?: {
     onSessionStart?: boolean;
   };
-  injection?: "system-prompt" | "message-append" | "tape";
+  injection?: "system-prompt" | "message-append";
   systemPrompt?: {
     maxTokens?: number;
     includeProjects?: string[];
   };
-  tape?: TapeConfig;
+  tape?: TapeConfig & { enabled?: boolean };
 }
 
 export interface GitResult {
@@ -104,9 +104,11 @@ function loadSettings(): MemoryMdSettings {
       includeProjects: ["current"],
     },
     tape: {
-      contextStrategy: "smart",
-      fileLimit: 10,
-      alwaysInclude: ["core/user/identity.md", "core/user/prefer.md"],
+      enabled: false,
+      context: {
+        strategy: "smart",
+        fileLimit: 10,
+      },
       tapePath: undefined, // Use default ~/.pi/memory-md/TAPE or {localPath}/TAPE
     },
   };
@@ -451,8 +453,8 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
     // I like this new uniform logic event.reason: "startup" | "reload" | "new" | "resume" | "fork"
     // It's better than session_switch and session_fork!
 
-    // Initialize tape service if injection mode is tape
-    if (settings.injection === "tape") {
+    // Initialize tape service if tape mode is enabled
+    if (settings.tape?.enabled) {
       const memoryDir = getMemoryDir(settings, ctx);
       const projectName = path.basename(ctx.cwd);
       const sessionId = ctx.sessionManager.getSessionId();
@@ -478,22 +480,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
         tapeService.recordUserMessage(content);
       });
 
-      // Auto-anchor on turn_start (if enabled)
-      pi.on("turn_start", (_turnEvent, turnCtx) => {
-        if (!tapeService) return;
-        const autoAnchorMode = settings.tape?.autoAnchor ?? "threshold";
-        
-        if (autoAnchorMode === "turn") {
-          const info = tapeService.getInfo();
-          // Skip first turn (session/start already exists)
-          if (info.anchorCount > 0 && info.entriesSinceLastAnchor > 0) {
-            tapeService.createAnchor("turn/start", { 
-              turnNumber: info.anchorCount,
-              entriesSinceLastAnchor: info.entriesSinceLastAnchor
-            });
-          }
-        }
-      });
+
 
       // Record assistant messages (only when complete, not during streaming)
       pi.on("message_end", (msgEvent, _msgCtx) => {
@@ -550,14 +537,13 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
 
         // Step 2: After all recordings, check if we need to create a new anchor
         const info = tapeService.getInfo();
-        const anchorThreshold = settings.tape?.anchorThreshold ?? 5;
-        const autoAnchorMode = settings.tape?.autoAnchor ?? "threshold";
+        const anchorConfig = settings.tape?.anchor ?? { mode: "threshold", threshold: 5 };
         
-        if (autoAnchorMode === "threshold" && info.entriesSinceLastAnchor >= anchorThreshold) {
+        if (anchorConfig.mode === "threshold" && info.entriesSinceLastAnchor >= (anchorConfig.threshold ?? 5)) {
           tapeService.createAnchor("auto/threshold", { 
             reason: "Entries since last anchor exceeded threshold",
             entriesSinceLastAnchor: info.entriesSinceLastAnchor,
-            threshold: anchorThreshold
+            threshold: anchorConfig.threshold
           });
           ctx.ui.notify(`Auto-created anchor: ${info.entriesSinceLastAnchor} entries since last anchor`, "info");
         }
@@ -580,25 +566,23 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
     }
 
     const mode = settings.injection || "message-append";
+    const tapeEnabled = settings.tape?.enabled;
 
-    // Tape mode: inject dynamic context before each agent turn
-    if (mode === "tape" && tapeService && tapeContextSelector) {
+    // Tape mode: inject dynamic context with smart selection, only once
+    if (tapeEnabled && tapeService && contextSelector) {
       try {
         const tapeConfig = settings.tape;
-        const limit = tapeConfig?.fileLimit || 10;
-        const alwaysInclude = tapeConfig?.alwaysInclude || [
-          "core/user/identity.md",
-          "core/user/prefer.md",
-        ];
+        const contextConfig = tapeConfig?.context || {
+          strategy: "smart",
+          fileLimit: 10,
+          alwaysInclude: [],
+        };
+        const limit = contextConfig.fileLimit || 10;
+        const alwaysInclude = contextConfig.alwaysInclude || [];
 
-        // Track if we've injected memory files this session
-        const isFirstSession = !memoryInjected;
-
-        // Only inject memory files on first session (LLM decides when to query tape history via tools)
-        if (isFirstSession) {
-          // Get memory file selection using context selector
-          if (!contextSelector) return undefined;
-          const memoryFiles = contextSelector.selectFilesForContext(tapeConfig?.contextStrategy || "smart", limit);
+        // Only inject memory files once per session
+        if (!memoryInjected) {
+          const memoryFiles = contextSelector.selectFilesForContext(contextConfig.strategy || "smart", limit);
           const memoryContext = contextSelector.buildContextFromFiles([
             ...alwaysInclude,
             ...memoryFiles,
@@ -615,19 +599,32 @@ Your conversation history is recorded in tape with anchors (checkpoints).
 - Use tape_handoff to create a new anchor/checkpoint when starting a new task
 `;
 
+          const fileCount = memoryFiles.length + alwaysInclude.length;
+
+          // In system-prompt mode, tape overrides system prompt
+          if (mode === "system-prompt") {
+            memoryInjected = true;
+            ctx.ui.notify(
+              `Tape mode: ${fileCount} memory files injected (overrides system prompt)`,
+              "info",
+            );
+            return {
+              systemPrompt: memoryContext + tapeHint,
+            };
+          }
+
+          // In message-append mode, send as custom message
           pi.sendMessage({
             customType: "pi-memory-md-tape",
             content: memoryContext + tapeHint,
             display: false,
           });
 
-          const fileCount = memoryFiles.length + alwaysInclude.length;
+          memoryInjected = true;
           ctx.ui.notify(
-            `Tape mode: ${fileCount} memory files injected (LLM queries tape history on demand)`,
+            `Tape mode: ${fileCount} memory files injected (message-append)`,
             "info",
           );
-
-          memoryInjected = true;
         }
       } catch (error) {
         console.error("Tape injection failed:", error);

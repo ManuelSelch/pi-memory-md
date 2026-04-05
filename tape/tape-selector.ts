@@ -135,8 +135,8 @@ export class ConversationSelector {
 
   constructor(tapeService: MemoryTapeService, config?: TapeConfig) {
     this.tapeService = tapeService;
-    this.maxTokens = config?.maxTapeTokens ?? 1000;
-    this.maxEntries = config?.maxTapeEntries ?? 10;
+    this.maxTokens = config?.context?.maxTapeTokens ?? 1000;
+    this.maxEntries = config?.context?.maxTapeEntries ?? 10;
   }
 
   private filterCoreEntries(entries: TapeEntry[]): TapeEntry[] {

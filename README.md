@@ -126,12 +126,13 @@ Markdown content...
 | `enabled` | `true` | Enable extension |
 | `repoUrl` | Required | GitHub repository URL |
 | `localPath` | `~/.pi/memory-md` | Local clone path |
-| `injection` | `"message-append"` | Memory injection mode: `"message-append"`, `"system-prompt"`,  `"tape"` |
+| `injection` | `"message-append"` | Memory injection mode: `"message-append"`, `"system-prompt"` |
 | `autoSync.onSessionStart` | `true` | Git pull on session start |
+| `tape.enabled` | `false` | Enable tape mode for dynamic context selection |
 
 ### Memory Injection Modes
 
-The extension supports three modes for injecting memory into the conversation:
+The extension supports two modes for injecting memory into the conversation:
 
 #### 1. Message Append (Default)
 
@@ -200,48 +201,67 @@ The LLM automatically:
 > **Experimental**: This mode is under active development. APIs and behavior may change.
 > **Note**: This mode may consume more tokens. Adjust parameters based on your model's context window and your API quota.
 
+### Tape vs Injection Modes
+
+**Tape** is an independent feature that can be enabled alongside either injection mode:
+
+- **With `injection: "message-append"`**: Tape still injects memory as a custom message (same as normal, but with smart file selection)
+- **With `injection: "system-prompt"`**: Tape **overrides** the system prompt with its own context (provides full control over what the model sees)
+
+In both cases, tape:
+- Injects memory files **once per session** (not on every turn)
+- Tracks all operations in an immutable tape (JSONL format): messages, tool calls, memory operations (by default)
+- **Anchor-based context**: Selects entries after the last anchor, then applies token/entry limits
+  - `maxTapeTokens` (default: 1000): Max tokens for context
+  - `maxTapeEntries` (default: 10): Max entries to consider before token limit
+- Creates checkpoints with `tape_handoff` to mark phase transitions
+- **Auto-anchor**: Automatically creates anchors when context grows too large
+  - `anchor.mode: "threshold"` (default): Creates anchor when entries exceed `anchor.threshold` (default: 5)
+  - `anchor.mode: "hand"`: Manual only, use `tape_handoff` tool
+- **Pros**: Token-efficient, automatic context management with checkpoint management
+- **Cons**: Slightly more complex configuration
+
 ```json
 {
   "pi-memory-md": {
     ...
     "localPath": "~/.pi/memory-md",
-    "injection": "tape",
     "tape": {
-      // "smart": balances recency + frequency (default)
-      // "recent-only": only recently accessed files
-      "contextStrategy": "smart",
+      "enabled": true,
+      "context": {
+        // "smart": balances recency + frequency (default)
+        // "recent-only": only recently accessed files
+        "strategy": "smart",
 
-      // Max files to inject into LLM context (tape records all operations)
-      "fileLimit": 10,
+        // Max files to inject into LLM context (tape records all operations)
+        "fileLimit": 10,
 
-      // Files to always include in context (regardless of access patterns)
-      "alwaysInclude": [
-        "core/user/identity.md",
-        "core/user/prefer.md",
-        "core/project/tech-stack.md"
-      ],
+        // Files to always include in context (optional, defaults to empty)
+        "alwaysInclude": [
+          "core/user/identity.md",
+          "core/user/prefer.md"
+        ],
 
-      // Token budget for tape conversation history (default: 1000)
-      // Controls how much recent conversation context to include
-      "maxTapeTokens": 1000,
+        // Token budget for tape conversation history (default: 1000)
+        // Controls how much recent conversation context to include
+        "maxTapeTokens": 1000,
 
-      // Maximum entries to consider before token limit (default: 10)
-      "maxTapeEntries": 10,
+        // Maximum entries to consider before token limit (default: 10)
+        "maxTapeEntries": 10,
 
-      // Include conversation history in context (default: true)
-      // Set to false to disable history and use memory files only
-      "includeConversationHistory": false,
-
-      // Auto-anchor strategy (default: "threshold")
-      // - "never": Never auto-create anchors (manual only via tape_handoff)
-      // - "turn": Create anchor at the start of each turn
-      // - "threshold": Create anchor when entries exceed threshold (recommended)
-      "autoAnchor": "threshold",
-
-      // Entries since last anchor before auto-creating (default: 5)
-      // Only used when autoAnchor is "threshold"
-      "anchorThreshold": 5,
-
+        // Include conversation history in context (default: true)
+        // Set to false to disable history and use memory files only
+        "includeConversationHistory": false
+      },
+      "anchor": {
+        // Auto-anchor configuration (default: { mode: "threshold", threshold: 5 })
+        // - mode: "hand" - Manual only, create anchors via tape_handoff tool
+        // - mode: "threshold" - Create anchor when entries exceed threshold
+        // - threshold: Number of entries since last anchor before auto-creating
+        "mode": "threshold",
+        "threshold": 5
+     },
+     
       // Custom tape storage path (optional)
       // If not set, uses: {localPath}/TAPE or ~/.pi/memory-md/TAPE
       "tapePath": "/custom/path/to/tape"
@@ -254,18 +274,6 @@ Each line in the tape is a JSON record:
 ```json
 {"id":"1234567890-abc123","kind":"tool_call","timestamp":"2026-04-04T12:00:00.000Z","payload":{"tool":"memory_search","args":{"query":"context"}}}
 ```
-
-- Tracks all operations in an immutable tape (JSONL format): messages, tool calls, memory operations
-- **Anchor-based context**: Selects entries after the last anchor, then applies token/entry limits
-  - `maxTapeTokens` (default: 1000): Max tokens for context
-  - `maxTapeEntries` (default: 10): Max entries to consider before token limit
-- Creates checkpoints with `tape_handoff` to mark phase transitions
-- **Auto-anchor**: Automatically creates anchors when context grows too large
-  - `autoAnchor: "threshold"` (default): Creates anchor when entries exceed `anchorThreshold` (default: 5)
-  - `autoAnchor: "never"`: Manual only, use `tape_handoff` tool
-- **Pros**: Token-efficient, automatic context management with checkpoint management
-- **Cons**: Slightly more complex configuration
-- **Note**: Tape mode is automatically enabled when `injection: "tape"`
 
 ### Tape Anchors
 
@@ -297,5 +305,5 @@ more details: https://tape.systems/
 | `tape_read` | `{afterAnchor?, lastAnchor?, betweenAnchors?, betweenDates?, query?, kinds?, limit?}` | Read tape entries as formatted messages |
 | `tape_reset` | `{archive?: boolean}` | Reset the tape with new session/start anchor |
 
-> **Note**: Tape tools are automatically registered when using `injection: "tape"` mode. They provide anchor-based context management inspired by [bub](https://bub.build)'s tape mechanism.
+> **Note**: Tape tools are automatically registered when `tape` is set to `true`. They provide anchor-based context management inspired by [bub](https://bub.build)'s tape mechanism.
 

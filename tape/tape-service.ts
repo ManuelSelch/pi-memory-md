@@ -2,8 +2,6 @@ import { randomUUID, createHash } from "node:crypto";
 import type { TapeEntry, TapeEntryKind, TapeConfig } from "./tape-types.js";
 import { MemoryTapeStore } from "./tape-store.js";
 
-const DEFAULT_ALWAYS_INCLUDE = ["core/user/identity.md", "core/user/prefer.md"];
-
 export class MemoryTapeService {
   private store: MemoryTapeStore;
   private alwaysInclude: Set<string>;
@@ -19,7 +17,7 @@ export class MemoryTapeService {
   ) {
     this.store = new MemoryTapeStore(memoryDir, config?.tapePath, workspace, sessionId);
     this.enableDuplicateDetection = config?.enableDuplicateDetection ?? true;
-    this.alwaysInclude = new Set(config?.alwaysInclude || DEFAULT_ALWAYS_INCLUDE);
+    this.alwaysInclude = new Set(config?.context?.alwaysInclude || []);
   }
 
   record(kind: TapeEntryKind, payload: Record<string, unknown>, turn?: number): string {
