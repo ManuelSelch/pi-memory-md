@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import matter from "gray-matter";
 import type { MemoryTapeService } from "./tape-service.js";
-import type { TapeConfig, TapeEntry } from "./tape-types.js";
+import type { TapeEntry } from "./tape-types.js";
 
 const CHARS_PER_TOKEN = 4;
 
@@ -13,89 +13,102 @@ export interface TapeMessage {
   name?: string;
 }
 
+function entryToMessage(entry: TapeEntry): TapeMessage | null {
+  switch (entry.kind) {
+    case "anchor":
+    case "session/start":
+      return {
+        role: "assistant",
+        content: `[Anchor: ${entry.payload.name}] ${JSON.stringify(entry.payload.state, null, 2)}`,
+      };
+
+    case "message/user":
+      return { role: "user", content: entry.payload.content as string };
+
+    case "message/assistant":
+      return { role: "assistant", content: entry.payload.content as string };
+
+    case "tool_call": {
+      const _callId = (entry.payload.callId as string) ?? `call_${Date.now()}`;
+      return null; // Tool calls handled in pairs with results
+    }
+
+    case "tool_result": {
+      const callId = entry.payload.callId as string;
+      const content =
+        typeof entry.payload.result === "string" ? entry.payload.result : JSON.stringify(entry.payload.result);
+      return { role: "tool", content: content.slice(0, 5000), tool_call_id: callId };
+    }
+
+    case "memory/read":
+      return { role: "assistant", content: `[Memory Read] ${entry.payload.path}` };
+
+    case "memory/write":
+      return { role: "assistant", content: `[Memory Write] ${entry.payload.path}` };
+
+    case "memory/search":
+      return {
+        role: "assistant",
+        content: `[Memory Search] "${entry.payload.query}" returned ${entry.payload.count} results`,
+      };
+
+    default:
+      return null;
+  }
+}
+
 export function formatEntriesAsMessages(entries: TapeEntry[]): TapeMessage[] {
   const messages: TapeMessage[] = [];
-  const pendingToolCalls = new Map<string, { name: string }>();
-
   for (const entry of entries) {
-    switch (entry.kind) {
-      case "anchor":
-      case "session/start": {
-        messages.push({
-          role: "assistant",
-          content: `[Anchor: ${entry.payload.name}] ${JSON.stringify(entry.payload.state, null, 2)}`,
-        });
-        break;
-      }
-
-      case "message/user": {
-        messages.push({ role: "user", content: entry.payload.content as string });
-        break;
-      }
-
-      case "message/assistant": {
-        messages.push({ role: "assistant", content: entry.payload.content as string });
-        break;
-      }
-
-      case "tool_call": {
-        const callId = (entry.payload.callId as string) ?? `call_${Date.now()}`;
-        pendingToolCalls.set(callId, { name: entry.payload.tool as string });
-        break;
-      }
-
-      case "tool_result": {
-        const callId = entry.payload.callId as string;
-        const content =
-          typeof entry.payload.result === "string" ? entry.payload.result : JSON.stringify(entry.payload.result);
-
-        if (callId && pendingToolCalls.has(callId)) {
-          messages.push({
-            role: "assistant",
-            content: "",
-            tool_call_id: callId,
-            name: pendingToolCalls.get(callId)!.name,
-          });
-          pendingToolCalls.delete(callId);
-        }
-
-        messages.push({ role: "tool", content: content.slice(0, 5000) });
-        break;
-      }
-
-      case "memory/read": {
-        messages.push({ role: "assistant", content: `[Memory Read] ${entry.payload.path}` });
-        break;
-      }
-
-      case "memory/write": {
-        messages.push({ role: "assistant", content: `[Memory Write] ${entry.payload.path}` });
-        break;
-      }
-
-      case "memory/search": {
-        messages.push({
-          role: "assistant",
-          content: `[Memory Search] "${entry.payload.query}" returned ${entry.payload.count} results`,
-        });
-        break;
-      }
-    }
+    const msg = entryToMessage(entry);
+    if (msg) messages.push(msg);
   }
-
   return messages;
 }
 
-export class ConversationSelector {
-  private tapeService: MemoryTapeService;
-  private maxTokens: number;
-  private maxEntries: number;
+function formatEntryLine(entry: TapeEntry): string | null {
+  switch (entry.kind) {
+    case "message/user":
+    case "message/assistant": {
+      const content = (entry.payload.content as string)?.substring(0, 80) ?? "";
+      const truncated = content.length > 80 ? `${content}...` : content;
+      return `${entry.kind === "message/user" ? "User" : "Assistant"}: ${truncated}`;
+    }
 
-  constructor(tapeService: MemoryTapeService, config?: TapeConfig) {
-    this.tapeService = tapeService;
-    this.maxTokens = config?.context?.maxTapeTokens ?? 1000;
-    this.maxEntries = config?.context?.maxTapeEntries ?? 40;
+    case "tool_call": {
+      const argsStr = JSON.stringify(entry.payload.args).slice(0, 50);
+      return `Tool: ${entry.payload.tool}(${argsStr})`;
+    }
+
+    case "tool_result": {
+      const resultStr = JSON.stringify(entry.payload.result).slice(0, 50);
+      return `Result: ${entry.payload.tool} -> ${resultStr}`;
+    }
+
+    case "memory/read":
+      return `Memory read: ${entry.payload.path}`;
+
+    case "memory/write":
+      return `Memory write: ${entry.payload.path}`;
+
+    case "memory/search":
+      return `Memory search: ${entry.payload.query}`;
+
+    case "anchor":
+    case "session/start":
+      return `-- Anchor: ${entry.payload.name ?? "checkpoint"} --`;
+
+    default:
+      return null;
   }
+}
+
+export class ConversationSelector {
+  constructor(
+    private tapeService: MemoryTapeService,
+    private maxTokens: number = 1000,
+    private maxEntries: number = 40,
+  ) {}
 
   selectFromAnchor(anchorId?: string): TapeEntry[] {
     const entries = this.tapeService.query({ sinceAnchor: anchorId }).slice(-this.maxEntries);
@@ -104,50 +117,11 @@ export class ConversationSelector {
 
   buildFormattedContext(entries: TapeEntry[]): string {
     const lines: string[] = [];
-
     for (const entry of entries) {
-      switch (entry.kind) {
-        case "message/user":
-        case "message/assistant": {
-          const content = entry.payload.content as string;
-          const truncated = content.length > 80 ? `${content.slice(0, 80)}...` : content;
-          lines.push(`${entry.kind === "message/user" ? "User" : "Assistant"}: ${truncated}`);
-          break;
-        }
-
-        case "tool_call": {
-          const argsStr = JSON.stringify(entry.payload.args).slice(0, 50);
-          lines.push(`Tool: ${entry.payload.tool}(${argsStr})`);
-          break;
-        }
-
-        case "tool_result": {
-          const resultStr = JSON.stringify(entry.payload.result).slice(0, 50);
-          lines.push(`Result: ${entry.payload.tool} -> ${resultStr}`);
-          break;
-        }
-
-        case "memory/read":
-          lines.push(`Memory read: ${entry.payload.path}`);
-          break;
-
-        case "memory/write":
-          lines.push(`Memory write: ${entry.payload.path}`);
-          break;
-
-        case "memory/search":
-          lines.push(`Memory search: ${entry.payload.query}`);
-          break;
-
-        case "anchor":
-        case "session/start":
-          lines.push(`-- Anchor: ${entry.payload.name ?? "checkpoint"} --`);
-          break;
-      }
+      const line = formatEntryLine(entry);
+      if (line) lines.push(line);
     }
-
-    if (lines.length === 0) return "";
-    return `${lines.join("\n")}\n\n---\n`;
+    return lines.length > 0 ? `${lines.join("\n")}\n\n---\n` : "";
   }
 
   private filterByTokenBudget(entries: TapeEntry[]): TapeEntry[] {
@@ -166,32 +140,28 @@ export class ConversationSelector {
 }
 
 export class MemoryFileSelector {
-  private tapeService: MemoryTapeService;
-  private memoryDir: string;
-
-  constructor(tapeService: MemoryTapeService, memoryDir: string) {
-    this.tapeService = tapeService;
-    this.memoryDir = memoryDir;
-  }
+  constructor(
+    private tapeService: MemoryTapeService,
+    private memoryDir: string,
+  ) {}
 
   selectFilesForContext(strategy: "recent-only" | "smart", limit: number): string[] {
-    if (strategy === "recent-only") return this.selectRecentOnly(limit);
-    return this.selectSmart(limit);
+    return strategy === "recent-only" ? this.selectRecentOnly(limit) : this.selectSmart(limit);
   }
 
-  selectRecentOnly(limit: number): string[] {
-    const memoryEntries = this.tapeService.query({ kinds: ["memory/read", "memory/write"] });
+  private selectRecentOnly(limit: number): string[] {
+    const entries = this.tapeService.query({ kinds: ["memory/read", "memory/write"] });
     const paths = new Set<string>();
 
-    for (let i = memoryEntries.length - 1; i >= 0 && paths.size < limit; i--) {
-      const entryPath = memoryEntries[i].payload.path as string;
+    for (let i = entries.length - 1; i >= 0 && paths.size < limit; i--) {
+      const entryPath = entries[i].payload.path as string;
       if (entryPath) paths.add(entryPath);
     }
 
     return Array.from(paths);
   }
 
-  selectSmart(limit: number): string[] {
+  private selectSmart(limit: number): string[] {
     const anchor = this.tapeService.getLastAnchor();
     const entries = this.tapeService.query({ sinceAnchor: anchor?.id });
     const pathStats = this.analyzePathAccess(entries);
@@ -216,7 +186,6 @@ export class MemoryFileSelector {
     if (filePaths.length === 0) return "";
 
     const lines = ["# Project Memory", "", "Available memory files (use memory_read to view full content):", ""];
-
     for (const relPath of filePaths) {
       const { description, tags } = this.extractFrontmatter(relPath);
       lines.push(`- ${relPath}`);
@@ -233,7 +202,6 @@ export class MemoryFileSelector {
 
     for (const entry of entries) {
       if (entry.kind !== "memory/read" && entry.kind !== "memory/write") continue;
-
       const entryPath = entry.payload.path as string;
       if (!entryPath) continue;
 
@@ -284,9 +252,10 @@ export class MemoryFileSelector {
     const fullPath = path.join(this.memoryDir, relPath);
     try {
       const { data } = matter.read(fullPath);
-      const description = (data.description as string)?.trim() || "No description";
-      const tags = Array.isArray(data.tags) && data.tags.length > 0 ? data.tags.join(", ") : "none";
-      return { description, tags };
+      return {
+        description: (data.description as string)?.trim() || "No description",
+        tags: Array.isArray(data.tags) && data.tags.length > 0 ? data.tags.join(", ") : "none",
+      };
     } catch {
       return { description: "No description", tags: "none" };
     }

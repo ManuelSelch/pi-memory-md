@@ -4,18 +4,14 @@ import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { formatEntriesAsMessages } from "./tape-selector.js";
 import type { MemoryTapeService } from "./tape-service.js";
-import type { TapeEntryKind } from "./tape-types.js";
-
-type RenderState = { expanded: boolean; isPartial: boolean };
-
-// --- Shared render helpers ---
+import type { RenderState, TapeEntry, TapeEntryKind } from "./tape-types.js";
 
 function renderText(text: string): Text {
   return new Text(text, 0, 0);
 }
 
-function renderWithExpandHint(text: string, theme: Theme, lineCount: number): Text {
-  const remaining = lineCount - 1;
+function renderWithExpandHint(text: string, theme: Theme, totalLines: number): Text {
+  const remaining = totalLines - 1;
   if (remaining > 0) {
     text +=
       "\n" +
@@ -40,13 +36,10 @@ function renderDefaultResult(
     return renderWithExpandHint(theme.fg("success", collapsedSummary), theme, lines.length);
   }
 
-  const text = result.content[0]?.text ?? "";
-  return renderText(theme.fg("toolOutput", text));
+  return renderText(theme.fg("toolOutput", result.content[0]?.text ?? ""));
 }
 
-// --- Entry formatting ---
-
-function formatEntrySummary(entry: { kind: string; timestamp: string; payload: Record<string, unknown> }): string {
+function formatEntrySummary(entry: TapeEntry): string {
   const time = new Date(entry.timestamp).toLocaleTimeString();
 
   switch (entry.kind) {
@@ -73,8 +66,6 @@ function formatEntrySummary(entry: { kind: string; timestamp: string; payload: R
   }
 }
 
-// --- Tool parameter schemas (shared) ---
-
 const ENTRY_KINDS = [
   "memory/read",
   "memory/write",
@@ -89,36 +80,21 @@ const ENTRY_KINDS = [
 
 const EntryKindUnion = Type.Union(ENTRY_KINDS.map((k) => Type.Literal(k)));
 
-// --- Tool registrations ---
-
 export function registerTapeHandoff(pi: ExtensionAPI, tapeService: MemoryTapeService): void {
   pi.registerTool({
     name: "tape_handoff",
     label: "Tape Handoff",
     description: "Create an anchor checkpoint in the tape (marks a phase transition)",
     parameters: Type.Object({
-      name: Type.String({
-        description: "Anchor name (e.g., 'session/start', 'task/begin', 'handoff')",
-      }),
-      summary: Type.Optional(
-        Type.String({
-          description: "Optional summary of this checkpoint",
-        }),
-      ),
+      name: Type.String({ description: "Anchor name (e.g., 'session/start', 'task/begin', 'handoff')" }),
+      summary: Type.Optional(Type.String({ description: "Optional summary of this checkpoint" })),
       state: Type.Optional(
-        Type.Record(Type.String(), Type.Unknown(), {
-          description: "Optional state to associate with this anchor",
-        }),
+        Type.Record(Type.String(), Type.Unknown(), { description: "Optional state to associate with this anchor" }),
       ),
     }),
 
     async execute(_toolCallId, params) {
-      const { name, summary, state } = params as {
-        name: string;
-        summary?: string;
-        state?: Record<string, unknown>;
-      };
-
+      const { name, summary, state } = params as { name: string; summary?: string; state?: Record<string, unknown> };
       const anchorId = tapeService.createAnchor(name);
 
       return {
@@ -126,11 +102,7 @@ export function registerTapeHandoff(pi: ExtensionAPI, tapeService: MemoryTapeSer
         details: {
           anchorId,
           name,
-          state: {
-            ...state,
-            ...(summary && { summary }),
-            timestamp: new Date().toISOString(),
-          },
+          state: { ...state, ...(summary && { summary }), timestamp: new Date().toISOString() },
         },
       };
     },
@@ -141,13 +113,10 @@ export function registerTapeHandoff(pi: ExtensionAPI, tapeService: MemoryTapeSer
 
     renderResult(result, state: RenderState, theme) {
       if (state.isPartial) return renderText(theme.fg("warning", "Creating anchor..."));
-
-      if (!state.expanded) {
-        const name = (result.details as { name?: string })?.name ?? "Anchor created";
-        return renderText(theme.fg("success", name));
-      }
-
-      return renderText(theme.fg("toolOutput", (result.content[0] as { text?: string })?.text ?? ""));
+      const name = (result.details as { name?: string })?.name ?? "Anchor created";
+      return !state.expanded
+        ? renderText(theme.fg("success", name))
+        : renderText(theme.fg("toolOutput", (result.content[0] as { text?: string })?.text ?? ""));
     },
   });
 }
@@ -159,11 +128,7 @@ export function registerTapeAnchors(pi: ExtensionAPI, tapeService: MemoryTapeSer
     description: "List all anchor checkpoints in the tape with context",
     parameters: Type.Object({
       limit: Type.Optional(
-        Type.Integer({
-          description: "Maximum number of anchors to return (default: 20)",
-          minimum: 1,
-          maximum: 100,
-        }),
+        Type.Integer({ description: "Maximum number of anchors to return (default: 20)", minimum: 1, maximum: 100 }),
       ),
       contextLines: Type.Optional(
         Type.Integer({
@@ -176,23 +141,18 @@ export function registerTapeAnchors(pi: ExtensionAPI, tapeService: MemoryTapeSer
 
     async execute(_toolCallId, params) {
       const { limit = 20, contextLines = 1 } = params as { limit?: number; contextLines?: number };
-
       const allEntries = tapeService.query({});
       const anchorEntries = allEntries.filter((e) => e.kind === "anchor" || e.kind === "session/start").slice(-limit);
 
       const anchorsWithContext = anchorEntries.map((anchor) => {
         const idx = allEntries.findIndex((e) => e.id === anchor.id);
-
-        const before = allEntries.slice(Math.max(0, idx - contextLines), idx).map(formatEntrySummary);
-        const after = allEntries.slice(idx + 1, idx + 1 + contextLines).map(formatEntrySummary);
-
         return {
           id: anchor.id,
           name: (anchor.payload.name as string) ?? "unnamed",
           timestamp: anchor.timestamp,
           state: (anchor.payload.state as Record<string, unknown>) ?? {},
-          beforeContext: before,
-          afterContext: after,
+          beforeContext: allEntries.slice(Math.max(0, idx - contextLines), idx).map(formatEntrySummary),
+          afterContext: allEntries.slice(idx + 1, idx + 1 + contextLines).map(formatEntrySummary),
         };
       });
 
@@ -244,31 +204,17 @@ export function registerTapeAnchors(pi: ExtensionAPI, tapeService: MemoryTapeSer
         const time = new Date(first.timestamp).toLocaleTimeString();
         let summary = theme.fg("success", `${first.name} (${time})`);
 
-        if (first.beforeContext.length > 0) {
-          summary +=
-            "\n" +
-            theme.fg("muted", "Before:") +
-            "\n  " +
-            first.beforeContext.map((c) => theme.fg("muted", c)).join("\n  ");
-        }
-        if (first.afterContext.length > 0) {
-          summary +=
-            "\n" +
-            theme.fg("muted", "After:") +
-            "\n  " +
-            first.afterContext.map((c) => theme.fg("muted", c)).join("\n  ");
-        }
-        if (Object.keys(first.state).length > 0) {
+        if (first.beforeContext.length > 0)
+          summary += `\n${theme.fg("muted", "Before:\n  ")}${first.beforeContext.map((c) => theme.fg("muted", c)).join("\n  ")}`;
+        if (first.afterContext.length > 0)
+          summary += `\n${theme.fg("muted", "After:\n  ")}${first.afterContext.map((c) => theme.fg("muted", c)).join("\n  ")}`;
+        if (Object.keys(first.state).length > 0)
           summary += `\n${theme.fg("muted", `State: ${JSON.stringify(first.state)}`)}`;
-        }
 
         return renderWithExpandHint(summary, theme, details.count ?? 1);
       }
 
-      if (!state.expanded) {
-        return renderText(theme.fg("success", `${details?.count ?? 0} anchor(s)`));
-      }
-
+      if (!state.expanded) return renderText(theme.fg("success", `${details?.count ?? 0} anchor(s)`));
       return renderText(theme.fg("toolOutput", (result.content[0] as { text?: string })?.text ?? ""));
     },
   });
@@ -288,12 +234,12 @@ export function registerTapeInfo(pi: ExtensionAPI, tapeService: MemoryTapeServic
         : "none";
       const tapeFileCount = tapeService.getTapeFileCount();
 
-      const recommendation =
-        info.entriesSinceLastAnchor > 20
-          ? "\n\n💡 Recommendation: Context is getting large. Consider using tape_handoff to create a new checkpoint."
-          : info.entriesSinceLastAnchor > 10
-            ? "\n\n⚠️  Warning: Context is growing. You may want to use tape_handoff soon."
-            : "";
+      let recommendation = "";
+      if (info.entriesSinceLastAnchor > 20)
+        recommendation =
+          "\n\n💡 Recommendation: Context is getting large. Consider using tape_handoff to create a new checkpoint.";
+      else if (info.entriesSinceLastAnchor > 10)
+        recommendation = "\n\n⚠️  Warning: Context is growing. You may want to use tape_handoff soon.";
 
       const summary = [
         `📊 Tape Information:`,
@@ -345,30 +291,13 @@ export function registerTapeSearch(pi: ExtensionAPI, tapeService: MemoryTapeServ
     parameters: Type.Object({
       kinds: Type.Optional(Type.Array(EntryKindUnion)),
       limit: Type.Optional(
-        Type.Integer({
-          description: "Maximum number of results (default: 20)",
-          minimum: 1,
-          maximum: 100,
-        }),
+        Type.Integer({ description: "Maximum number of results (default: 20)", minimum: 1, maximum: 100 }),
       ),
-      sinceAnchor: Type.Optional(
-        Type.String({
-          description: "Anchor ID to search from (entries after this anchor)",
-        }),
-      ),
+      sinceAnchor: Type.Optional(Type.String({ description: "Anchor ID to search from (entries after this anchor)" })),
     }),
 
     async execute(_toolCallId, params) {
-      const {
-        kinds,
-        limit = 20,
-        sinceAnchor,
-      } = params as {
-        kinds?: string[];
-        limit?: number;
-        sinceAnchor?: string;
-      };
-
+      const { kinds, limit = 20, sinceAnchor } = params as { kinds?: string[]; limit?: number; sinceAnchor?: string };
       const entries = tapeService.query({ kinds: kinds as TapeEntryKind[], limit, sinceAnchor });
 
       const header = [
@@ -376,13 +305,11 @@ export function registerTapeSearch(pi: ExtensionAPI, tapeService: MemoryTapeServ
         ...(kinds ? [`Filtered by kinds: ${kinds.join(", ")}`] : []),
         ...(sinceAnchor ? [`Since anchor: ${sinceAnchor}`] : []),
       ].join("\n");
-
       const results = entries
-        .map((e) => {
-          const timestamp = new Date(e.timestamp).toLocaleTimeString();
-          const payload = JSON.stringify(e.payload).slice(0, 80);
-          return `[${timestamp}] ${e.kind}: ${payload}...`;
-        })
+        .map(
+          (e) =>
+            `[${new Date(e.timestamp).toLocaleTimeString()}] ${e.kind}: ${JSON.stringify(e.payload).slice(0, 80)}...`,
+        )
         .join("\n");
 
       return {
@@ -413,15 +340,9 @@ export function registerTapeRead(pi: ExtensionAPI, tapeService: MemoryTapeServic
       "Read tape entries as formatted messages (for context). Supports fluent query: after anchor, between dates, text search, kind filter, limit",
     parameters: Type.Object({
       afterAnchor: Type.Optional(
-        Type.String({
-          description: "Anchor name to read entries after (e.g., 'task/start')",
-        }),
+        Type.String({ description: "Anchor name to read entries after (e.g., 'task/start')" }),
       ),
-      lastAnchor: Type.Optional(
-        Type.Boolean({
-          description: "Read entries after the last anchor (default: false)",
-        }),
-      ),
+      lastAnchor: Type.Optional(Type.Boolean({ description: "Read entries after the last anchor (default: false)" })),
       betweenAnchors: Type.Optional(
         Type.Object(
           {
@@ -434,24 +355,16 @@ export function registerTapeRead(pi: ExtensionAPI, tapeService: MemoryTapeServic
       betweenDates: Type.Optional(
         Type.Object(
           {
-            start: Type.String({ description: "Start date (ISO format, e.g., '2026-01-01')" }),
-            end: Type.String({ description: "End date (ISO format, e.g., '2026-01-31')" }),
+            start: Type.String({ description: "Start date (ISO format)" }),
+            end: Type.String({ description: "End date (ISO format)" }),
           },
           { description: "Read entries between two dates" },
         ),
       ),
-      query: Type.Optional(
-        Type.String({
-          description: "Text search in entry content",
-        }),
-      ),
+      query: Type.Optional(Type.String({ description: "Text search in entry content" })),
       kinds: Type.Optional(Type.Array(EntryKindUnion)),
       limit: Type.Optional(
-        Type.Integer({
-          description: "Maximum number of entries to return (default: 20)",
-          minimum: 1,
-          maximum: 100,
-        }),
+        Type.Integer({ description: "Maximum number of entries to return (default: 20)", minimum: 1, maximum: 100 }),
       ),
     }),
 
@@ -474,21 +387,12 @@ export function registerTapeRead(pi: ExtensionAPI, tapeService: MemoryTapeServic
         limit?: number;
       };
 
-      const queryOptions: Parameters<typeof tapeService.query>[0] = {
-        query,
-        kinds: kinds as TapeEntryKind[],
-        limit,
-      };
+      const queryOptions: Parameters<typeof tapeService.query>[0] = { query, kinds: kinds as TapeEntryKind[], limit };
 
-      if (betweenAnchors) {
-        queryOptions.betweenAnchors = betweenAnchors;
-      } else if (betweenDates) {
-        queryOptions.betweenDates = betweenDates;
-      } else if (afterAnchor) {
-        queryOptions.sinceAnchor = afterAnchor;
-      } else if (lastAnchor) {
-        queryOptions.lastAnchor = true;
-      }
+      if (betweenAnchors) queryOptions.betweenAnchors = betweenAnchors;
+      else if (betweenDates) queryOptions.betweenDates = betweenDates;
+      else if (afterAnchor) queryOptions.sinceAnchor = afterAnchor;
+      else if (lastAnchor) queryOptions.lastAnchor = true;
 
       const entries = tapeService.query(queryOptions);
       const messages = formatEntriesAsMessages(entries);
@@ -496,11 +400,7 @@ export function registerTapeRead(pi: ExtensionAPI, tapeService: MemoryTapeServic
       const summary =
         `Retrieved ${messages.length} messages from tape:\n\n` +
         messages.map((m) => `${m.role}: ${m.content.slice(0, 100)}${m.content.length > 100 ? "..." : ""}`).join("\n");
-
-      return {
-        content: [{ type: "text", text: summary }],
-        details: { messages, count: messages.length },
-      };
+      return { content: [{ type: "text", text: summary }], details: { messages, count: messages.length } };
     },
 
     renderCall(args, theme) {
@@ -525,27 +425,18 @@ export function registerTapeReset(pi: ExtensionAPI, tapeService: MemoryTapeServi
     label: "Tape Reset",
     description: "Reset the tape (creates a new session/start anchor)",
     parameters: Type.Object({
-      archive: Type.Optional(
-        Type.Boolean({
-          description: "Archive old tape before reset (default: false)",
-        }),
-      ),
+      archive: Type.Optional(Type.Boolean({ description: "Archive old tape before reset (default: false)" })),
     }),
 
     async execute(_toolCallId, params) {
       const { archive = false } = params as { archive?: boolean };
-
       tapeService.clear();
       tapeService.recordSessionStart();
 
       const text = archive
         ? "Tape archived and reset with new session/start anchor"
         : "Tape reset with new session/start anchor";
-
-      return {
-        content: [{ type: "text", text }],
-        details: { archived: archive },
-      };
+      return { content: [{ type: "text", text }], details: { archived: archive } };
     },
 
     renderCall(args, theme) {
@@ -556,9 +447,7 @@ export function registerTapeReset(pi: ExtensionAPI, tapeService: MemoryTapeServi
 
     renderResult(result, state: RenderState, theme) {
       if (state.isPartial) return renderText(theme.fg("warning", "Resetting..."));
-
       const text = (result.content[0] as { text?: string })?.text ?? "";
-      if (!state.expanded) return renderText(theme.fg("success", text));
       return renderText(theme.fg("success", text));
     },
   });

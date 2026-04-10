@@ -10,17 +10,16 @@ function isAnchorEntry(entry: TapeEntry): boolean {
 }
 
 export class MemoryTapeStore {
-  private tapePath: string;
-  private tapeDir: string;
-  private projectName: string;
+  private readonly tapeDir: string;
+  private readonly tapePath: string;
 
   constructor(memoryDir: string, customTapePath?: string, projectName?: string, sessionId?: string) {
     this.tapeDir = customTapePath ?? path.join(getLocalPath(), "TAPE");
     fs.mkdirSync(this.tapeDir, { recursive: true });
 
-    this.projectName = projectName ?? path.basename(memoryDir);
+    const name = projectName ?? path.basename(memoryDir);
     const sid = sessionId ?? "unknown";
-    this.tapePath = path.join(this.tapeDir, `${this.projectName}__${sid}.jsonl`);
+    this.tapePath = path.join(this.tapeDir, `${name}__${sid}.jsonl`);
   }
 
   append(entry: TapeEntry): void {
@@ -40,7 +39,6 @@ export class MemoryTapeStore {
     let entries = this.loadAllEntries();
     const { betweenAnchors, betweenDates, kinds, lastAnchor, limit, query, since, sinceAnchor } = options;
 
-    // Apply anchor-based slicing first (these are mutually exclusive)
     if (betweenAnchors) {
       const startIdx = this.findAnchorIndex(entries, betweenAnchors.start);
       const endIdx = this.findAnchorIndex(entries, betweenAnchors.end, startIdx + 1);
@@ -56,33 +54,26 @@ export class MemoryTapeStore {
       entries = entries.slice(idx + 1);
     }
 
-    // Apply filters
     if (betweenDates) {
       const startTime = new Date(betweenDates.start).getTime();
       const endTime = new Date(betweenDates.end).getTime();
-      entries = entries.filter((entry) => {
-        const t = new Date(entry.timestamp).getTime();
+      entries = entries.filter((e) => {
+        const t = new Date(e.timestamp).getTime();
         return t >= startTime && t <= endTime;
       });
     }
 
     if (query) {
       const needle = query.toLowerCase();
-      entries = entries.filter((entry) => JSON.stringify(entry).toLowerCase().includes(needle));
+      entries = entries.filter((e) => JSON.stringify(e).toLowerCase().includes(needle));
     }
 
-    if (kinds) {
-      entries = entries.filter((entry) => kinds.includes(entry.kind));
-    }
-
+    if (kinds) entries = entries.filter((e) => kinds.includes(e.kind));
     if (since) {
       const sinceTime = new Date(since).getTime();
-      entries = entries.filter((entry) => new Date(entry.timestamp).getTime() >= sinceTime);
+      entries = entries.filter((e) => new Date(e.timestamp).getTime() >= sinceTime);
     }
-
-    if (limit) {
-      entries = entries.slice(0, limit);
-    }
+    if (limit) entries = entries.slice(0, limit);
 
     return entries;
   }
@@ -113,7 +104,6 @@ export class MemoryTapeStore {
     if (!fs.existsSync(this.tapeDir)) return [];
 
     const allEntries: TapeEntry[] = [];
-
     for (const file of this.getTapeFiles()) {
       const content = fs.readFileSync(path.join(this.tapeDir, file), "utf-8");
       for (const line of content.split("\n")) {
@@ -131,16 +121,13 @@ export class MemoryTapeStore {
 
   private getTapeFiles(): string[] {
     if (!fs.existsSync(this.tapeDir)) return [];
-    const prefix = `${this.projectName}__`;
+    const prefix = `${path.basename(this.tapePath).split("__")[0]}__`;
     return fs.readdirSync(this.tapeDir).filter((f) => f.endsWith(".jsonl") && f.startsWith(prefix));
   }
 
   private findAnchorIndex(entries: TapeEntry[], name: string, start = 0): number {
     for (let i = start; i < entries.length; i++) {
-      const entry = entries[i];
-      if (isAnchorEntry(entry) && entry.payload.name === name) {
-        return i;
-      }
+      if (isAnchorEntry(entries[i]) && entries[i].payload.name === name) return i;
     }
     return -1;
   }

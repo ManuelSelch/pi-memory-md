@@ -17,8 +17,6 @@ export class MemoryTapeService {
     return new MemoryTapeService(store, alwaysInclude, sessionId);
   }
 
-  // --- Recording methods ---
-
   private record(kind: TapeEntryKind, payload: Record<string, unknown>, turn?: number): string {
     const entry: TapeEntry = {
       id: randomUUID(),
@@ -79,8 +77,6 @@ export class MemoryTapeService {
   recordMemoryInit(force: boolean): void {
     this.record("memory/init", { force });
   }
-
-  // --- Query methods (delegate to store) ---
 
   query(options: Parameters<MemoryTapeStore["query"]>[0]): TapeEntry[] {
     return this.store.query(options);

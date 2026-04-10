@@ -62,3 +62,5 @@ export interface TapeConfig {
     threshold?: number; // Entries since last anchor before auto-creating (default: 15)
   };
 }
+
+export type RenderState = { expanded: boolean; isPartial: boolean };
