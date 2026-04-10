@@ -6,8 +6,9 @@ import type { GrayMatterFile } from "gray-matter";
 import matter from "gray-matter";
 import { MemoryFileSelector } from "./tape/tape-selector.js";
 import { MemoryTapeService } from "./tape/tape-service.js";
+import { registerAllTapeTools } from "./tape/tape-tools.js";
 import type { TapeConfig } from "./tape/tape-types.js";
-import { registerAllTapeTools, registerAllTools } from "./tools.js";
+import { registerAllMemoryTools } from "./tools.js";
 
 /**
  * Type definitions for memory files, settings, and git operations.
@@ -157,10 +158,10 @@ export async function gitExec(
     return { stdout: result.stdout || "", success: true };
   } catch (error) {
     clearTimeout(timeoutId);
-    const err = error as { name?: string; code?: string };
+    const err = error as { name?: string; code?: string; message?: string };
     const isTimeout = err?.name === "AbortError" || err?.code === "ABORT_ERR";
     if (isTimeout) return { stdout: "", success: false, timeout: true };
-    return { stdout: "", success: false };
+    return { stdout: err?.message || String(error), success: false };
   }
 }
 
@@ -185,7 +186,7 @@ export async function syncRepository(
 
     const pullResult = await gitExec(pi, localPath, ["pull", "--rebase", "--autostash"]);
     if (pullResult.timeout) return { success: false, message: TIMEOUT_MESSAGE };
-    if (!pullResult.success) return { success: false, message: "Pull failed - check repo URL and authentication" };
+    if (!pullResult.success) return { success: false, message: pullResult.stdout || "Pull failed" };
 
     isRepoInitialized.value = true;
     const updated = pullResult.stdout.includes("Updating") || pullResult.stdout.includes("Fast-forward");
@@ -209,7 +210,7 @@ export async function syncRepository(
     return { success: true, message: `Cloned [${repoName}] successfully`, updated: true };
   }
 
-  return { success: false, message: "Clone failed - check repo URL and authentication" };
+  return { success: false, message: cloneResult.stdout || "Clone failed" };
 }
 
 /**
@@ -472,12 +473,12 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
         if (!tapeService) return;
         const message = msgEvent.message as { role: string; content?: string | Array<{ type: string; text?: string }> };
         if (message.role !== "user") return;
-        const content =
-          typeof message.content === "string"
-            ? message.content
-            : Array.isArray(message.content)
-              ? message.content.map((c) => c.text || "").join("")
-              : "";
+        let content = "";
+        if (typeof message.content === "string") {
+          content = message.content;
+        } else if (Array.isArray(message.content)) {
+          content = message.content.map((c) => c.text || "").join("");
+        }
         tapeService.startNewTurn();
         tapeService.recordUserMessage(content);
       });
@@ -487,12 +488,12 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
         if (!tapeService) return;
         const message = msgEvent.message as { role: string; content?: string | Array<{ type: string; text?: string }> };
         if (message.role !== "assistant") return;
-        const content =
-          typeof message.content === "string"
-            ? message.content
-            : Array.isArray(message.content)
-              ? message.content.map((c) => c.text || "").join("")
-              : "";
+        let content = "";
+        if (typeof message.content === "string") {
+          content = message.content;
+        } else if (Array.isArray(message.content)) {
+          content = message.content.map((c) => c.text || "").join("");
+        }
         tapeService.recordAssistantMessage(content);
       });
 
@@ -506,10 +507,14 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
       pi.on("tool_result", (toolEvent, _toolCtx) => {
         if (!tapeService) return;
 
-        const { toolName, input, details } = toolEvent;
+        const { toolName, input, details } = toolEvent as {
+          toolName: string;
+          input: Record<string, unknown>;
+          details?: Record<string, unknown>;
+        };
 
         // Step 1: Record all operations first (tool_result + specific memory operations)
-        tapeService.recordToolResult(toolName, details);
+        tapeService.recordToolResult(toolName, details ?? {});
 
         // Record memory operations specifically
         if (toolName === "memory_read") {
@@ -666,7 +671,7 @@ Your conversation history is recorded in tape with anchors (checkpoints).
     return undefined;
   });
 
-  registerAllTools(pi, settings, repoInitialized);
+  registerAllMemoryTools(pi, settings, repoInitialized);
 
   pi.registerCommand("memory-status", {
     description: "Show memory repository status",
