@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { getLocalPath } from "../memory-md.js";
+import { getLocalPath } from "../memoryMdCore.js";
 import type { TapeEntry, TapeEntryKind } from "./tape-types.js";
 
 const ANCHOR_KINDS: ReadonlySet<string> = new Set(["anchor", "session/start"]);

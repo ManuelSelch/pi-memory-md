@@ -301,7 +301,7 @@ export function registerTapeSearch(pi: ExtensionAPI, tapeService: MemoryTapeServ
       const entries = tapeService.query({ kinds: kinds as TapeEntryKind[], limit, sinceAnchor });
 
       const header = [
-        `Tape search results: ${entries.length} match(es)`,
+        `Tape search results: ${entries.length} found`,
         ...(kinds ? [`Filtered by kinds: ${kinds.join(", ")}`] : []),
         ...(sinceAnchor ? [`Since anchor: ${sinceAnchor}`] : []),
       ].join("\n");
@@ -327,7 +327,7 @@ export function registerTapeSearch(pi: ExtensionAPI, tapeService: MemoryTapeServ
 
     renderResult(result, state: RenderState, theme) {
       const details = result.details as { count?: number } | undefined;
-      return renderDefaultResult(result, state, theme, `${details?.count ?? 0} match(es)`);
+      return renderDefaultResult(result, state, theme, `${details?.count ?? 0} found`);
     },
   });
 }

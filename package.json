@@ -33,7 +33,7 @@
   },
   "pi": {
     "extensions": [
-      "./memory-md.ts"
+      "./index.ts"
     ],
     "skills": [
       "./skills/memory-init/SKILL.md",
@@ -43,8 +43,10 @@
     ]
   },
   "files": [
-    "memory-md.ts",
+    "index.ts",
+    "memoryMdCore.ts",
     "tools.ts",
+    "types.ts",
     "tape",
     "skills",
     "README.md",

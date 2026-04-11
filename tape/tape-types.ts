@@ -52,7 +52,7 @@ export interface ContextSelection {
 export interface TapeConfig {
   tapePath?: string;
   context?: {
-    strategy: TapeContextStrategy; // "smart" (default) or "recent-only"
+    strategy?: TapeContextStrategy; // "smart" (default) or "recent-only"
     fileLimit?: number; // Max files to inject (default: 10)
     alwaysInclude?: string[]; // Files to always include (default: [])
     maxTapeTokens?: number; // Max tokens for tape context (default: 1000)
@@ -60,7 +60,7 @@ export interface TapeConfig {
     includeConversationHistory?: boolean; // Include conversation history (default: true)
   };
   anchor?: {
-    mode: "hand" | "threshold"; // Auto-anchor strategy (default: "threshold")
+    mode?: "hand" | "threshold" | "manual"; // Auto-anchor strategy (default: "threshold")
     threshold?: number; // Entries since last anchor before auto-creating (default: 15)
   };
 }

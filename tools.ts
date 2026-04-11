@@ -4,7 +4,6 @@ import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
 import { keyHint } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import type { MemoryFrontmatter, MemoryMdSettings } from "./memory-md.js";
 import {
   getCurrentDate,
   getMemoryDir,
@@ -13,11 +12,12 @@ import {
   readMemoryFile,
   syncRepository,
   writeMemoryFile,
-} from "./memory-md.js";
+} from "./memoryMdCore.js";
+import type { MemoryFrontmatter, MemoryMdSettings } from "./types.js";
 
 // Re-export types for convenience
 export type { ToolRenderResultOptions } from "@mariozechner/pi-coding-agent";
-export type { MemoryFrontmatter, MemoryMdSettings } from "./memory-md.js";
+export type { MemoryFrontmatter, MemoryMdSettings } from "./types.js";
 
 // ============================================================================
 // Render Utilities - Inline for simplicity
@@ -149,7 +149,7 @@ export function registerMemorySync(
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { action } = params as { action: "pull" | "push" | "status" };
       const localPath = settings.localPath!;
-      const memoryDir = getMemoryDir(settings, ctx);
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
       const coreUserDir = path.join(memoryDir, "core", "user");
 
       if (action === "status") {
@@ -253,7 +253,7 @@ export function registerMemoryRead(pi: ExtensionAPI, settings: MemoryMdSettings)
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { path: relPath } = params as { path: string };
-      const fullPath = path.join(getMemoryDir(settings, ctx), relPath);
+      const fullPath = path.join(getMemoryDir(settings, ctx.cwd), relPath);
       const memory = readMemoryFile(fullPath);
 
       if (!memory) {
@@ -296,7 +296,7 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
         description,
         tags,
       } = params as { path: string; content: string; description: string; tags?: string[] };
-      const fullPath = path.join(getMemoryDir(settings, ctx), relPath);
+      const fullPath = path.join(getMemoryDir(settings, ctx.cwd), relPath);
       const existing = readMemoryFile(fullPath);
 
       const frontmatter: MemoryFrontmatter = {
@@ -335,7 +335,7 @@ export function registerMemoryList(pi: ExtensionAPI, settings: MemoryMdSettings)
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { directory } = params as { directory?: string };
-      const memoryDir = getMemoryDir(settings, ctx);
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
       const files = listMemoryFiles(directory ? path.join(memoryDir, directory) : memoryDir);
       const relPaths = files.map((f) => path.relative(memoryDir, f));
       return {
@@ -365,7 +365,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { query, searchIn } = params as { query: string; searchIn: "content" | "tags" | "description" };
-      const memoryDir = getMemoryDir(settings, ctx);
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
       const files = listMemoryFiles(memoryDir);
       const results: Array<{ path: string; match: string }> = [];
       const queryLower = query.toLowerCase();
@@ -456,7 +456,7 @@ export function registerMemoryCheck(pi: ExtensionAPI, settings: MemoryMdSettings
     parameters: Type.Object({}),
 
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const memoryDir = getMemoryDir(settings, ctx);
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
       if (!fs.existsSync(memoryDir)) {
         return {
           content: [
