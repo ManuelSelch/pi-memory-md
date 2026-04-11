@@ -28,10 +28,8 @@ function entryToMessage(entry: TapeEntry): TapeMessage | null {
     case "message/assistant":
       return { role: "assistant", content: entry.payload.content as string };
 
-    case "tool_call": {
-      const _callId = (entry.payload.callId as string) ?? `call_${Date.now()}`;
+    case "tool_call":
       return null; // Tool calls handled in pairs with results
-    }
 
     case "tool_result": {
       const callId = entry.payload.callId as string;
@@ -103,11 +101,15 @@ function formatEntryLine(entry: TapeEntry): string | null {
   }
 }
 
+// ============================================================================
+// Selectors
+// ============================================================================
+
 export class ConversationSelector {
   constructor(
     private tapeService: MemoryTapeService,
-    private maxTokens: number = 1000,
-    private maxEntries: number = 40,
+    private maxTokens = 1000,
+    private maxEntries = 40,
   ) {}
 
   selectFromAnchor(anchorId?: string): TapeEntry[] {
@@ -116,11 +118,7 @@ export class ConversationSelector {
   }
 
   buildFormattedContext(entries: TapeEntry[]): string {
-    const lines: string[] = [];
-    for (const entry of entries) {
-      const line = formatEntryLine(entry);
-      if (line) lines.push(line);
-    }
+    const lines = entries.map(formatEntryLine).filter((line): line is string => line !== null);
     return lines.length > 0 ? `${lines.join("\n")}\n\n---\n` : "";
   }
 
@@ -188,10 +186,7 @@ export class MemoryFileSelector {
     const lines = ["# Project Memory", "", "Available memory files (use memory_read to view full content):", ""];
     for (const relPath of filePaths) {
       const { description, tags } = this.extractFrontmatter(relPath);
-      lines.push(`- ${relPath}`);
-      lines.push(`  Description: ${description}`);
-      lines.push(`  Tags: ${tags}`);
-      lines.push("");
+      lines.push(`- ${relPath}`, `  Description: ${description}`, `  Tags: ${tags}`, "");
     }
 
     return lines.join("\n");
@@ -227,14 +222,14 @@ export class MemoryFileSelector {
     if (!fs.existsSync(coreDir)) return [];
 
     const paths: string[] = [];
-    const scanDir = (dir: string, base = ""): void => {
+    const scanDir = (dir: string, base: string): void => {
       if (paths.length >= limit) return;
 
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
         if (paths.length >= limit || entry.name.startsWith(".")) continue;
 
         const fullPath = path.join(dir, entry.name);
-        const relPath = base ? path.join(base, entry.name) : entry.name;
+        const relPath = path.join(base, entry.name);
 
         if (entry.isDirectory()) {
           scanDir(fullPath, relPath);
@@ -244,7 +239,7 @@ export class MemoryFileSelector {
       }
     };
 
-    scanDir(coreDir);
+    scanDir(coreDir, "core");
     return paths;
   }
 
