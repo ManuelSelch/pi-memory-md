@@ -355,50 +355,103 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
   pi.registerTool({
     name: "memory_search",
     label: "Memory Search",
-    description: "Search memory files by content or tags",
+    description: "Search memory files by tags, description, or custom grep/rg pattern",
     parameters: Type.Object({
-      query: Type.String({ description: "Search query" }),
-      searchIn: Type.Union([Type.Literal("content"), Type.Literal("tags"), Type.Literal("description")], {
-        description: "Where to search",
-      }),
+      query: Type.String({ description: "Search query (for tags and description)" }),
+      grep: Type.Optional(Type.String({ description: "Custom grep pattern (use with tool: 'grep')" })),
+      rg: Type.Optional(Type.String({ description: "Custom ripgrep pattern (use with tool: 'rg')" })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { query, searchIn } = params as { query: string; searchIn: "content" | "tags" | "description" };
+      const { query } = params as { query: string };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const files = listMemoryFiles(memoryDir);
-      const results: Array<{ path: string; match: string }> = [];
-      const queryLower = query.toLowerCase();
+      const coreDir = path.join(memoryDir, "core");
+      const results: string[] = [];
+      const matchedFiles = new Set<string>();
 
-      for (const filePath of files) {
-        const memory = readMemoryFile(filePath);
-        if (!memory) continue;
-        const relPath = path.relative(memoryDir, filePath);
-        const { frontmatter, content } = memory;
+      if (!fs.existsSync(coreDir)) {
+        return {
+          content: [{ type: "text", text: `Memory directory not found: ${coreDir}` }],
+          details: { files: [], count: 0 },
+        };
+      }
 
-        if (searchIn === "content" && content.toLowerCase().includes(queryLower)) {
-          const matchLine = content.split("\n").find((line) => line.toLowerCase().includes(queryLower));
-          results.push({ path: relPath, match: matchLine || content.substring(0, 100) });
-        } else if (searchIn === "tags" && frontmatter.tags?.some((tag) => tag.toLowerCase().includes(queryLower))) {
-          results.push({ path: relPath, match: `Tags: ${frontmatter.tags?.join(", ")}` });
-        } else if (searchIn === "description" && frontmatter.description.toLowerCase().includes(queryLower)) {
-          results.push({ path: relPath, match: frontmatter.description });
+      const escQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      // Run tool and parse results
+      const runTool = async (tool: string, args: string[]) => {
+        const { stdout } = await pi.exec(tool, args).catch(() => ({ stdout: "" }));
+        return (stdout || "")
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const idx = line.indexOf(":");
+            if (idx === -1) return line;
+            matchedFiles.add(line.substring(0, idx));
+            return `${path.relative(memoryDir, line.substring(0, idx))}: ${line.substring(idx + 1).trim()}`;
+          });
+      };
+
+      // Priority 1: Search tags
+      const tagResults = await runTool("grep", ["-rn", "--include=*.md", "-E", `^\\s*-\\s*${escQuery}`, coreDir]);
+      if (tagResults.length > 0) {
+        results.push("## Tags matching: " + query, ...tagResults.slice(0, 20));
+      }
+
+      // Priority 2: Search description
+      const descResults = await runTool("grep", [
+        "-rn",
+        "--include=*.md",
+        "-E",
+        `^description:\\s*.*${escQuery}`,
+        coreDir,
+      ]);
+      if (descResults.length > 0) {
+        results.push("\n## Description matching: " + query, ...descResults.slice(0, 20));
+      }
+
+      // Optional: Custom patterns
+      const { grep: customGrep, rg: customRg } = params as { grep?: string; rg?: string };
+      if (customGrep) {
+        const customResults = await runTool("grep", ["-rn", "--include=*.md", "-E", customGrep, coreDir]);
+        if (customResults.length > 0) {
+          results.push("\n## Custom grep: " + customGrep, ...customResults.slice(0, 50));
         }
+      }
+      if (customRg) {
+        const rgResults = await runTool("rg", ["-t", "md", customRg, coreDir]);
+        if (rgResults.length > 0) {
+          results.push("\n## Custom ripgrep: " + customRg, ...rgResults.slice(0, 50));
+        }
+      }
+
+      const fileList = Array.from(matchedFiles).map((f) => path.relative(memoryDir, f));
+
+      if (results.length === 0) {
+        return {
+          content: [{ type: "text", text: `No results found for: "${query}"` }],
+          details: { files: [], count: 0 },
+        };
       }
 
       return {
         content: [
           {
             type: "text",
-            text: `Found ${results.length} result(s):\n\n${results.map((r) => `  ${r.path}\n  ${r.match}`).join("\n\n")}`,
+            text: `Found ${fileList.length} file(s) matching "${query}":\n\n${results.join("\n")}\n\nUse memory_read to view full content.`,
           },
         ],
-        details: { results, count: results.length },
+        details: { files: fileList, count: fileList.length },
       };
     },
 
     renderCall: (args, theme) => new Text(buildToolCallText("memory_search", args, theme), 0, 0),
-    renderResult: (result, options, theme) => renderCountResult(result, options, theme, "result(s)"),
+    renderResult: (result, options, theme) => {
+      const details = result.details as { count?: number; files?: string[] };
+      const summary = details?.count ? `${details.count} result(s)` : "Search complete";
+      return renderCollapsed(summary, getResultText(result), options, theme);
+    },
   });
 }
 

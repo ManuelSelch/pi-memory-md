@@ -5,65 +5,94 @@ description: Search and retrieve information from pi-memory-md memory files
 
 # Memory Search
 
-Use this skill to find information stored in pi-memory-md memory files.
+Search memory files with **multi-mode** search capability.
 
-## Search Types
+## Search Modes
 
-### Search by Content
-
-Search within markdown content:
-
-```
-memory_search(query="typescript", searchIn="content")
-```
-
-Returns matching files with content excerpts.
-
-### Search by Tags
-
-Find files with specific tags:
+### 1. Tags & Description (Built-in)
+Automatically searches tags and descriptions based on query:
 
 ```
-memory_search(query="user", searchIn="tags")
+memory_search(query="typescript")
 ```
 
-Best for finding files by category or topic.
-
-### Search by Description
-
-Find files by their frontmatter description:
+### 2. Custom Grep Pattern (grep)
+For complex content search with standard grep:
 
 ```
-memory_search(query="identity", searchIn="description")
+memory_search({
+  query: "project",
+  grep: "typescript|javascript"
+})
 ```
 
-Best for discovering files by purpose.
+### 3. Custom Ripgrep Pattern (rg)
+For smarter search with ripgrep (smart case, better regex):
 
-## Common Search Patterns
+```
+memory_search({
+  query: "project",
+  rg: "typescript|javascript"
+})
+```
 
-| Goal | Command |
-|------|---------|
-| User preferences | `memory_search(query="user", searchIn="tags")` |
-| Project info | `memory_search(query="architecture", searchIn="description")` |
-| Code style | `memory_search(query="typescript", searchIn="content")` |
-| Reference docs | `memory_search(query="reference", searchIn="tags")` |
+## Tool Selection
 
-## Search Tips
+| Parameter | Tool | Best For |
+|-----------|------|----------|
+| `grep` | GNU grep | Portable, universal |
+| `rg` | ripgrep | Smart case, faster, better regex |
 
-- **Case insensitive**: `typescript` and `TYPESCRIPT` work the same
-- **Partial matches**: `auth` matches "auth", "authentication", "author"
-- **Be specific**: "JWT token validation" > "token"
-- **Try different types**: If content search fails, try tags or description
+## Examples
 
-## When Results Are Empty
+### Find files by tag
+```
+memory_search(query="user")
+```
 
-1. Check query spelling
-2. Try different `searchIn` type
-3. List all files: `memory_list()`
-4. Sync repository: `memory_sync(action="pull")`
+### Grep: OR patterns
+```
+memory_search({
+  query: "project",
+  grep: "architecture|component|module"
+})
+```
+
+### Ripgrep: Smart case
+```
+memory_search({
+  query: "typescript",
+  rg: "typescript|javascript"
+})
+```
+
+### Grep: Word boundary
+```
+memory_search({
+  query: "api",
+  grep: "\\bAPI\\b"
+})
+```
+
+### Both: Compare results
+```
+memory_search({
+  query: "project",
+  grep: "pattern1",
+  rg: "pattern2"
+})
+```
+
+## Search Priority
+
+1. **Tags** - Exact tag matches (grep)
+2. **Description** - Description keyword matches (grep)
+3. **Custom grep** - Optional grep pattern
+4. **Custom rg** - Optional ripgrep pattern
 
 ## Related Skills
 
 - `memory-management` - Read and write files
-- `memory-sync` - Ensure latest data
-- `memory-init` - Setup repository
+- `memory-sync` - Git synchronization
+- `memory-init` - Initial repository setup
+- `tape-mode` - Conversation history search
