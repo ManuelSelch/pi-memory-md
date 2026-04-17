@@ -30,10 +30,10 @@ export class AnchorIndex {
 
     try {
       const content = fs.readFileSync(this.indexPath, "utf-8");
-      const lines = content.trim().split("\n");
 
-      for (const line of lines) {
+      for (const line of content.split("\n")) {
         if (!line.trim()) continue;
+
         try {
           const entry: AnchorEntry = JSON.parse(line);
           this.addToMemoryIndex(entry);
@@ -69,6 +69,7 @@ export class AnchorIndex {
 
   findBySession(sessionId: string): AnchorEntry[] {
     const result: AnchorEntry[] = [];
+
     for (const entries of this.index.values()) {
       for (const entry of entries) {
         if (entry.sessionId === sessionId) {
@@ -76,6 +77,7 @@ export class AnchorIndex {
         }
       }
     }
+
     return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }
 
@@ -85,21 +87,26 @@ export class AnchorIndex {
       return sessionAnchors[sessionAnchors.length - 1] ?? null;
     }
 
-    // Find last anchor across all sessions
     let last: AnchorEntry | null = null;
+
     for (const entries of this.index.values()) {
       for (const entry of entries) {
-        if (!last || new Date(entry.timestamp) > new Date(last.timestamp)) last = entry;
+        if (!last || new Date(entry.timestamp).getTime() > new Date(last.timestamp).getTime()) {
+          last = entry;
+        }
       }
     }
+
     return last;
   }
 
   getAllAnchors(): AnchorEntry[] {
     const result: AnchorEntry[] = [];
+
     for (const entries of this.index.values()) {
       result.push(...entries);
     }
+
     return result.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }
 
@@ -111,17 +118,29 @@ export class AnchorIndex {
     until?: string;
   }): AnchorEntry[] {
     const { query, sessionId, limit = 20, since, until } = options;
+    const sinceTime = since ? new Date(since).getTime() : null;
+    const untilTime = until ? new Date(until).getTime() : null;
+    const needle = query?.toLowerCase();
+
     let anchors = this.getAllAnchors();
 
-    // Filter by session, time range, and query
-    if (sessionId) anchors = anchors.filter((a) => a.sessionId === sessionId);
-    if (since) anchors = anchors.filter((a) => new Date(a.timestamp).getTime() >= new Date(since).getTime());
-    if (until) anchors = anchors.filter((a) => new Date(a.timestamp).getTime() <= new Date(until).getTime());
-    if (query) {
-      const needle = query.toLowerCase();
+    if (sessionId) {
+      anchors = anchors.filter((anchor) => anchor.sessionId === sessionId);
+    }
+
+    if (sinceTime !== null) {
+      anchors = anchors.filter((anchor) => new Date(anchor.timestamp).getTime() >= sinceTime);
+    }
+
+    if (untilTime !== null) {
+      anchors = anchors.filter((anchor) => new Date(anchor.timestamp).getTime() <= untilTime);
+    }
+
+    if (needle) {
       anchors = anchors.filter(
-        (a) =>
-          a.name.toLowerCase().includes(needle) || (a.state && JSON.stringify(a.state).toLowerCase().includes(needle)),
+        (anchor) =>
+          anchor.name.toLowerCase().includes(needle) ||
+          (anchor.state && JSON.stringify(anchor.state).toLowerCase().includes(needle)),
       );
     }
 
@@ -132,6 +151,7 @@ export class AnchorIndex {
     if (fs.existsSync(this.indexPath)) {
       fs.unlinkSync(this.indexPath);
     }
+
     this.index.clear();
   }
 }

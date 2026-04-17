@@ -42,9 +42,6 @@ export class MemoryTapeService {
     return entryId;
   }
 
-  /**
-   * Query entries from pi session file
-   */
   query(options: {
     query?: string;
     types?: SessionEntry["type"][];
@@ -63,6 +60,7 @@ export class MemoryTapeService {
     if (betweenAnchors) {
       const startAnchor = this.anchorIndex.findByName(betweenAnchors.start);
       const endAnchor = this.anchorIndex.findByName(betweenAnchors.end);
+
       if (startAnchor && endAnchor) {
         startTime = startAnchor.timestamp;
         endTime = endAnchor.timestamp;
@@ -88,16 +86,31 @@ export class MemoryTapeService {
 
     let entries = parsed.entries;
 
-    // Filter by time range
-    if (startTime) entries = getEntriesAfterTimestamp(entries, startTime);
-    if (endTime) entries = entries.filter((e) => new Date(e.timestamp).getTime() <= new Date(endTime!).getTime());
-    if (since) entries = getEntriesAfterTimestamp(entries, since);
-    if (types?.length) entries = entries.filter((e) => types.includes(e.type));
+    if (startTime) {
+      entries = getEntriesAfterTimestamp(entries, startTime);
+    }
+
+    if (endTime) {
+      const endTimestamp = new Date(endTime).getTime();
+      entries = entries.filter((entry) => new Date(entry.timestamp).getTime() <= endTimestamp);
+    }
+
+    if (since) {
+      entries = getEntriesAfterTimestamp(entries, since);
+    }
+
+    if (types?.length) {
+      entries = entries.filter((entry) => types.includes(entry.type));
+    }
+
     if (query) {
       const needle = query.toLowerCase();
-      entries = entries.filter((e) => JSON.stringify(e).toLowerCase().includes(needle));
+      entries = entries.filter((entry) => JSON.stringify(entry).toLowerCase().includes(needle));
     }
-    if (limit) entries = entries.slice(-limit);
+
+    if (limit) {
+      entries = entries.slice(-limit);
+    }
 
     return entries;
   }

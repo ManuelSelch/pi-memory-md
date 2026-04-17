@@ -20,7 +20,7 @@ import { registerAllMemoryTools } from "./tools.js";
  * Main extension initialization.
  */
 
-export default function memoryMdExtension(pi: ExtensionAPI) {
+export default function memoryMdExtension(pi: ExtensionAPI): void {
   let settings: MemoryMdSettings = loadSettings();
   const repoInitialized = { value: false };
   let syncPromise: ReturnType<typeof syncRepository> | null = null;
@@ -85,7 +85,15 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
 
         if (anchorConfig.mode === "threshold" && info.entriesSinceLastAnchor >= (anchorConfig.threshold ?? 25)) {
           const now = new Date();
-          const timestamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}${String(now.getSeconds()).padStart(2, "0")}`;
+          const timestamp = [
+            now.getFullYear(),
+            String(now.getMonth() + 1).padStart(2, "0"),
+            String(now.getDate()).padStart(2, "0"),
+            String(now.getHours()).padStart(2, "0"),
+            String(now.getMinutes()).padStart(2, "0"),
+            String(now.getSeconds()).padStart(2, "0"),
+          ].join("");
+
           tapeService.createAnchor(`auto/threshold-${timestamp}`);
           ctx.ui.notify(
             `Auto-created anchor: ${info.entriesSinceLastAnchor} entries since last anchor (${info.anchorCount} anchors total)`,
@@ -133,7 +141,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
 
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
-      const fileCount = cachedMemoryContext.split("\n").filter((l) => l.startsWith("-")).length;
+      const fileCount = cachedMemoryContext.split("\n").filter((line) => line.startsWith("-")).length;
       ctx.ui.notify(`Memory injected: ${fileCount} files (${mode})`, "info");
 
       if (mode === "message-append") {
@@ -216,7 +224,7 @@ export default function memoryMdExtension(pi: ExtensionAPI) {
       memoryInjected = false;
 
       const mode = settings.injection || "message-append";
-      const fileCount = memoryContext.split("\n").filter((l) => l.startsWith("-")).length;
+      const fileCount = memoryContext.split("\n").filter((line) => line.startsWith("-")).length;
 
       if (mode === "message-append") {
         pi.sendMessage({

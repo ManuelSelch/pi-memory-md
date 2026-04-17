@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import matter from "gray-matter";
-import type { GitResult, MemoryFrontmatter, MemoryMdSettings, ParsedFrontmatter } from "./types.js";
+import type { GitResult, MemoryFile, MemoryFrontmatter, MemoryMdSettings, ParsedFrontmatter } from "./types.js";
 
 export * from "./types.js";
 
@@ -191,26 +191,15 @@ function validateFrontmatter(data: ParsedFrontmatter): { valid: boolean; error?:
   return { valid: true };
 }
 
-export function readMemoryFile(filePath: string) {
+export function readMemoryFile(filePath: string): MemoryFile | null {
   try {
     const content = fs.readFileSync(filePath, "utf-8");
     const parsed = matter(content);
-
-    if (!parsed.data || Object.keys(parsed.data).length === 0) {
+    if (!parsed.data || Object.keys(parsed.data).length === 0 || !validateFrontmatter(parsed.data).valid) {
       return {
         path: filePath,
         frontmatter: { description: "No description" },
-        content: content,
-      };
-    }
-
-    const validation = validateFrontmatter(parsed.data);
-
-    if (!validation.valid) {
-      return {
-        path: filePath,
-        frontmatter: { description: "No description" },
-        content: content,
+        content,
       };
     }
 

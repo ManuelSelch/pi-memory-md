@@ -102,10 +102,13 @@ export function registerTapeHandoff(pi: ExtensionAPI, tapeService: MemoryTapeSer
 
     renderResult(result, state: RenderState, theme) {
       if (state.isPartial) return renderText(theme.fg("warning", "Creating anchor..."));
+
       const name = (result.details as { name?: string })?.name ?? "Anchor created";
-      return !state.expanded
-        ? renderText(theme.fg("success", name))
-        : renderText(theme.fg("toolOutput", (result.content[0] as { text?: string })?.text ?? ""));
+      if (!state.expanded) {
+        return renderText(theme.fg("success", name));
+      }
+
+      return renderText(theme.fg("toolOutput", (result.content[0] as { text?: string })?.text ?? ""));
     },
   });
 }
@@ -146,19 +149,21 @@ export function registerTapeAnchors(pi: ExtensionAPI, tapeService: MemoryTapeSer
         };
       });
 
-      const summary =
-        anchorsWithContext.length === 0
-          ? "No anchors found in tape. Use tape_handoff to create an anchor."
-          : `Found ${anchorsWithContext.length} anchor(s):\n\n` +
-            anchorsWithContext
-              .map((a) => {
-                const stateStr = Object.keys(a.state).length > 0 ? `\n  State: ${JSON.stringify(a.state)}` : "";
-                const beforeStr =
-                  a.beforeContext.length > 0 ? `\n  Before:\n    ${a.beforeContext.join("\n    ")}` : "";
-                const afterStr = a.afterContext.length > 0 ? `\n  After:\n    ${a.afterContext.join("\n    ")}` : "";
-                return `  - ${a.name} (${new Date(a.timestamp).toLocaleString()})${stateStr}${beforeStr}${afterStr}`;
-              })
-              .join("\n\n");
+      let summary = "No anchors found in tape. Use tape_handoff to create an anchor.";
+      if (anchorsWithContext.length > 0) {
+        summary =
+          `Found ${anchorsWithContext.length} anchor(s):\n\n` +
+          anchorsWithContext
+            .map((anchor) => {
+              const stateStr = Object.keys(anchor.state).length > 0 ? `\n  State: ${JSON.stringify(anchor.state)}` : "";
+              const beforeStr =
+                anchor.beforeContext.length > 0 ? `\n  Before:\n    ${anchor.beforeContext.join("\n    ")}` : "";
+              const afterStr =
+                anchor.afterContext.length > 0 ? `\n  After:\n    ${anchor.afterContext.join("\n    ")}` : "";
+              return `  - ${anchor.name} (${new Date(anchor.timestamp).toLocaleString()})${stateStr}${beforeStr}${afterStr}`;
+            })
+            .join("\n\n");
+      }
 
       return {
         content: [{ type: "text", text: summary }],
@@ -362,7 +367,6 @@ export function registerTapeSearch(pi: ExtensionAPI, tapeService: MemoryTapeServ
       }
 
       const header = parts.length > 0 ? `Found ${parts.join(", ")}` : "No results";
-      if (query) parts.push(`Query: "${query}"`);
 
       return {
         content: [{ type: "text", text: `${header}\n\n${lines.join("\n") || "(no results)"}` }],

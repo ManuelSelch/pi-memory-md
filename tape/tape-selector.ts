@@ -15,25 +15,25 @@ export interface TapeMessage {
 
 export function extractMessageContent(content: unknown): string {
   if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((c) => (c as { text?: string }).text || "").join("");
+  if (Array.isArray(content)) return content.map((part) => (part as { text?: string }).text || "").join("");
   return "";
 }
 
 function entryToMessage(entry: SessionEntry): TapeMessage | null {
   switch (entry.type) {
     case "message": {
-      const msg = entry as { message: { role: string; content?: unknown } };
+      const messageEntry = entry as { message: { role: string; content?: unknown } };
       return {
-        role: msg.message.role === "user" ? "user" : "assistant",
-        content: extractMessageContent(msg.message.content),
+        role: messageEntry.message.role === "user" ? "user" : "assistant",
+        content: extractMessageContent(messageEntry.message.content),
       };
     }
     case "custom":
     case "custom_message": {
-      const c = entry as { customType?: string; data?: unknown };
+      const customEntry = entry as { customType?: string; data?: unknown };
       return {
         role: "assistant",
-        content: `[${c.customType?.split("/").pop() ?? "custom"}] ${c.data ? JSON.stringify(c.data, null, 2) : ""}`,
+        content: `[${customEntry.customType?.split("/").pop() ?? "custom"}] ${customEntry.data ? JSON.stringify(customEntry.data, null, 2) : ""}`,
       };
     }
     case "thinking_level_change":
@@ -48,16 +48,16 @@ function entryToMessage(entry: SessionEntry): TapeMessage | null {
 }
 
 export function formatEntriesAsMessages(entries: SessionEntry[]): TapeMessage[] {
-  return entries.map(entryToMessage).filter((msg): msg is TapeMessage => msg !== null);
+  return entries.map(entryToMessage).filter((message): message is TapeMessage => message !== null);
 }
 
 function formatEntryLine(entry: SessionEntry): string | null {
   switch (entry.type) {
     case "message": {
-      const msg = entry as { message: { role: string; content?: unknown } };
-      const content = extractMessageContent(msg.message.content);
+      const messageEntry = entry as { message: { role: string; content?: unknown } };
+      const content = extractMessageContent(messageEntry.message.content);
       const truncated = content.length > 80 ? `${content.substring(0, 80)}...` : content;
-      return `${msg.message.role === "user" ? "User" : "Assistant"}: ${truncated}`;
+      return `${messageEntry.message.role === "user" ? "User" : "Assistant"}: ${truncated}`;
     }
     case "custom":
     case "custom_message":
@@ -97,6 +97,7 @@ export class ConversationSelector {
     for (const entry of entries) {
       const tokens = Math.ceil(JSON.stringify(entry).length / CHARS_PER_TOKEN);
       if (totalTokens + tokens > this.maxTokens) break;
+
       totalTokens += tokens;
       filtered.push(entry);
     }
@@ -112,11 +113,11 @@ export class MemoryFileSelector {
   ) {}
 
   selectFilesForContext(strategy: "recent-only" | "smart", limit: number): string[] {
-    return strategy === "recent-only" ? this.selectRecentOnly(limit) : this.selectSmart(limit);
-  }
+    if (strategy === "recent-only") {
+      return this.scanMemoryDirectory(limit);
+    }
 
-  private selectRecentOnly(limit: number): string[] {
-    return this.scanMemoryDirectory(limit);
+    return this.selectSmart(limit);
   }
 
   private selectSmart(limit: number): string[] {
@@ -134,6 +135,7 @@ export class MemoryFileSelector {
     if (filePaths.length === 0) return "";
 
     const lines = ["# Project Memory", "", "Available memory files (use memory_read to view full content):", ""];
+
     for (const relPath of filePaths) {
       const { description, tags } = this.extractFrontmatter(relPath);
       lines.push(`- ${relPath}`, `  Description: ${description}`, `  Tags: ${tags}`, "");
@@ -147,11 +149,12 @@ export class MemoryFileSelector {
 
     for (const entry of entries) {
       if (entry.type !== "message") continue;
-      const msg = entry as SessionMessageEntry;
-      if (msg.message.role !== "assistant") continue;
-      if (!Array.isArray(msg.message.content)) continue;
 
-      for (const block of msg.message.content) {
+      const messageEntry = entry as SessionMessageEntry;
+      if (messageEntry.message.role !== "assistant") continue;
+      if (!Array.isArray(messageEntry.message.content)) continue;
+
+      for (const block of messageEntry.message.content) {
         if (block.type !== "toolCall") continue;
         if (block.name !== "memory_read" && block.name !== "memory_write") continue;
 
@@ -159,7 +162,7 @@ export class MemoryFileSelector {
         if (!entryPath) continue;
 
         const stats = pathStats.get(entryPath) ?? { count: 0, lastAccess: 0 };
-        stats.count++;
+        stats.count += 1;
         stats.lastAccess = Math.max(stats.lastAccess, new Date(entry.timestamp).getTime());
         pathStats.set(entryPath, stats);
       }
@@ -170,8 +173,8 @@ export class MemoryFileSelector {
 
   private sortPathsByStats(pathStats: Map<string, { count: number; lastAccess: number }>): string[] {
     return Array.from(pathStats.entries())
-      .sort(([, a], [, b]) => b.count - a.count || b.lastAccess - a.lastAccess)
-      .map(([path]) => path);
+      .sort(([, left], [, right]) => right.count - left.count || right.lastAccess - left.lastAccess)
+      .map(([memoryPath]) => memoryPath);
   }
 
   private scanMemoryDirectory(limit: number): string[] {
@@ -179,6 +182,7 @@ export class MemoryFileSelector {
     if (!fs.existsSync(coreDir)) return [];
 
     const paths: string[] = [];
+
     const scanDir = (dir: string, base: string): void => {
       if (paths.length >= limit) return;
 
@@ -202,6 +206,7 @@ export class MemoryFileSelector {
 
   private extractFrontmatter(relPath: string): { description: string; tags: string } {
     const fullPath = path.join(this.memoryDir, relPath);
+
     try {
       const { data } = matter.read(fullPath);
       return {

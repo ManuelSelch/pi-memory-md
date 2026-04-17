@@ -104,14 +104,17 @@ function renderSyncResult(
   const text = getResultText(result);
   if (!options.expanded) {
     const lines = text.split("\n");
+
     if (details?.success === false) {
       return renderText(theme.fg("error", lines[0] || "Operation failed") + buildExpandHint(lines.length, theme));
     }
+
     const summary = details?.success
       ? theme.fg("success", lines[0] || "Success")
       : theme.fg("success", lines[0] || "Status");
     return renderText(summary + buildExpandHint(lines.length, theme));
   }
+
   return renderText(theme.fg("toolOutput", text));
 }
 
@@ -237,8 +240,7 @@ export function registerMemorySync(
     },
 
     renderCall: (args, theme) => new Text(buildToolCallText("memory_sync", args, theme), 0, 0),
-    renderResult: (result, options, theme) =>
-      options.isPartial ? renderText(theme.fg("warning", "Syncing...")) : renderSyncResult(result, options, theme),
+    renderResult: (result, options, theme) => renderSyncResult(result, options, theme),
   });
 }
 
@@ -357,16 +359,20 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
     label: "Memory Search",
     description: "Search memory files by tags, description, or custom grep/rg pattern",
     parameters: Type.Object({
-      query: Type.String({ description: "Search query (for tags and description)" }),
+      query: Type.Optional(Type.String({ description: "Search query for tags and description" })),
       grep: Type.Optional(Type.String({ description: "Custom grep pattern (use with tool: 'grep')" })),
       rg: Type.Optional(Type.String({ description: "Custom ripgrep pattern (use with tool: 'rg')" })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { query } = params as { query: string };
+      const { query, grep, rg } = params as {
+        query?: string;
+        grep?: string;
+        rg?: string;
+      };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
       const coreDir = path.join(memoryDir, "core");
-      const results: string[] = [];
+      const sections: string[] = [];
       const matchedFiles = new Set<string>();
 
       if (!fs.existsSync(coreDir)) {
@@ -376,61 +382,72 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
         };
       }
 
-      const escQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!query && !grep && !rg) {
+        return {
+          content: [{ type: "text", text: "Provide query, grep, or rg to search memory files." }],
+          details: { files: [], count: 0 },
+        };
+      }
 
-      // Run tool and parse results
-      const runTool = async (tool: string, args: string[]) => {
+      const escapedQuery = query ? query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : null;
+      const searchLabel = query ?? grep ?? rg ?? "search";
+
+      const runTool = async (tool: string, args: string[]): Promise<string[]> => {
         const { stdout } = await pi.exec(tool, args).catch(() => ({ stdout: "" }));
+
         return (stdout || "")
           .trim()
           .split("\n")
           .filter(Boolean)
           .map((line) => {
-            const idx = line.indexOf(":");
-            if (idx === -1) return line;
-            matchedFiles.add(line.substring(0, idx));
-            return `${path.relative(memoryDir, line.substring(0, idx))}: ${line.substring(idx + 1).trim()}`;
+            const separatorIndex = line.indexOf(":");
+            if (separatorIndex === -1) {
+              return line;
+            }
+
+            const matchedFilePath = line.slice(0, separatorIndex);
+            matchedFiles.add(matchedFilePath);
+            return `${path.relative(memoryDir, matchedFilePath)}: ${line.slice(separatorIndex + 1).trim()}`;
           });
       };
 
-      // Priority 1: Search tags
-      const tagResults = await runTool("grep", ["-rn", "--include=*.md", "-E", `^\\s*-\\s*${escQuery}`, coreDir]);
-      if (tagResults.length > 0) {
-        results.push("## Tags matching: " + query, ...tagResults.slice(0, 20));
-      }
+      if (escapedQuery) {
+        const tagResults = await runTool("grep", ["-rn", "--include=*.md", "-E", `^\\s*-\\s*${escapedQuery}`, coreDir]);
+        if (tagResults.length > 0) {
+          sections.push(`## Tags matching: ${query}`, ...tagResults.slice(0, 20));
+        }
 
-      // Priority 2: Search description
-      const descResults = await runTool("grep", [
-        "-rn",
-        "--include=*.md",
-        "-E",
-        `^description:\\s*.*${escQuery}`,
-        coreDir,
-      ]);
-      if (descResults.length > 0) {
-        results.push("\n## Description matching: " + query, ...descResults.slice(0, 20));
-      }
-
-      // Optional: Custom patterns
-      const { grep: customGrep, rg: customRg } = params as { grep?: string; rg?: string };
-      if (customGrep) {
-        const customResults = await runTool("grep", ["-rn", "--include=*.md", "-E", customGrep, coreDir]);
-        if (customResults.length > 0) {
-          results.push("\n## Custom grep: " + customGrep, ...customResults.slice(0, 50));
+        const descResults = await runTool("grep", [
+          "-rn",
+          "--include=*.md",
+          "-E",
+          `^description:\\s*.*${escapedQuery}`,
+          coreDir,
+        ]);
+        if (descResults.length > 0) {
+          sections.push("", `## Description matching: ${query}`, ...descResults.slice(0, 20));
         }
       }
-      if (customRg) {
-        const rgResults = await runTool("rg", ["-t", "md", customRg, coreDir]);
+
+      if (grep) {
+        const grepResults = await runTool("grep", ["-rn", "--include=*.md", "-E", grep, coreDir]);
+        if (grepResults.length > 0) {
+          sections.push("", `## Custom grep: ${grep}`, ...grepResults.slice(0, 50));
+        }
+      }
+
+      if (rg) {
+        const rgResults = await runTool("rg", ["-t", "md", rg, coreDir]);
         if (rgResults.length > 0) {
-          results.push("\n## Custom ripgrep: " + customRg, ...rgResults.slice(0, 50));
+          sections.push("", `## Custom ripgrep: ${rg}`, ...rgResults.slice(0, 50));
         }
       }
 
-      const fileList = Array.from(matchedFiles).map((f) => path.relative(memoryDir, f));
+      const fileList = Array.from(matchedFiles).map((filePath) => path.relative(memoryDir, filePath));
 
-      if (results.length === 0) {
+      if (sections.length === 0) {
         return {
-          content: [{ type: "text", text: `No results found for: "${query}"` }],
+          content: [{ type: "text", text: `No results found for "${searchLabel}".` }],
           details: { files: [], count: 0 },
         };
       }
@@ -439,7 +456,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
         content: [
           {
             type: "text",
-            text: `Found ${fileList.length} file(s) matching "${query}":\n\n${results.join("\n")}\n\nUse memory_read to view full content.`,
+            text: `Found ${fileList.length} file(s) matching "${searchLabel}":\n\n${sections.join("\n")}\n\nUse memory_read to view full content.`,
           },
         ],
         details: { files: fileList, count: fileList.length },
@@ -553,8 +570,12 @@ export function registerMemoryCheck(pi: ExtensionAPI, settings: MemoryMdSettings
     renderResult: (result, options, theme) => {
       if (options.isPartial) return renderText(theme.fg("warning", "Checking..."));
       const details = result.details as { exists?: boolean; fileCount?: number };
-      const summary = (details?.exists ?? true) ? `Structure: ${details?.fileCount ?? 0} files` : "Not initialized";
-      return renderCollapsed(summary, getResultText(result), options, theme);
+
+      if (details?.exists === false) {
+        return renderCollapsed("Not initialized", getResultText(result), options, theme);
+      }
+
+      return renderCollapsed(`Structure: ${details?.fileCount ?? 0} files`, getResultText(result), options, theme);
     },
   });
 }
