@@ -304,6 +304,7 @@ export function buildMemoryContext(settings: MemoryMdSettings, cwd: string): str
       lines.push(`- ${relPath}`);
       lines.push(`  Description: ${description}`);
       lines.push(`  Tags: ${tagStr}`);
+      lines.push(`  Content: ${memory.content}`);
       lines.push("");
     }
   }
