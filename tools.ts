@@ -472,9 +472,30 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
       }
 
       if (grep) {
-        const grepResults = await runTool("grep", ["-rn", "--include=*.md", "-E", grep, coreDir]);
-        if (grepResults.length > 0) {
-          sections.push("", `## Custom grep: ${grep}`, ...grepResults.slice(0, 50));
+        const contentResults = await runTool("grep", [
+          "-rn",
+          "--include=*.md",
+          "-E",
+          grep,
+          coreDir
+        ]);
+
+        const fileResults = await runTool("find", [
+          coreDir,
+          "-iname",
+          `*${grep}*`
+        ]);
+
+        if (contentResults.length > 0 || fileResults.length > 0) {
+          sections.push(
+            "",
+            `## Custom grep: ${grep}`,
+            "### Matching file names:",
+            ...fileResults.slice(0, 20),
+            "",
+            "### Matching content:",
+            ...contentResults.slice(0, 50)
+          );
         }
       }
 
