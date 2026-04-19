@@ -399,30 +399,24 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
     label: "Memory Search",
     description: "Search memory files by tags, description, or custom grep/rg pattern",
     parameters: Type.Object({
-      query: Type.Optional(Type.String({ description: "Search query for tags and description" })),
-      grep: Type.Optional(Type.String({ description: "Custom grep pattern (uses filename + content search)" })),
-      rg: Type.Optional(Type.String({ description: "Custom ripgrep pattern (use with tool: 'rg')" })),
+      grep: Type.String({ description: "Custom grep pattern (uses filename + content search)" }),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { query, grep, rg } = params as {
-        query?: string;
+      const { grep} = params as {
         grep?: string;
-        rg?: string;
       };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
       const sections: string[] = [];
       const matchedFiles = new Set<string>();
+      const searchLabel = grep;
 
-      if (!query && !grep && !rg) {
+      if (!grep) {
         return {
-          content: [{ type: "text", text: "Provide query, grep, or rg to search memory files." }],
+          content: [{ type: "text", text: "Provide grep to search memory files." }],
           details: { files: [], count: 0 },
         };
       }
-
-      const escapedQuery = query ? query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : null;
-      const searchLabel = query ?? grep ?? rg ?? "search";
 
       async function runTool(tool: string, args: string[]): Promise<string[]> {
         const { stdout } = await pi.exec(tool, args).catch(() => ({ stdout: "" }));
@@ -443,24 +437,6 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
         }
 
         return results;
-      }
-
-      if (escapedQuery) {
-        const tagResults = await runTool("grep", ["-rn", "--include=*.md", "-E", `^\\s*-\\s*${escapedQuery}`, memoryDir]);
-        if (tagResults.length > 0) {
-          sections.push(`## Tags matching: ${query}`, ...tagResults.slice(0, 20));
-        }
-
-        const descResults = await runTool("grep", [
-          "-rn",
-          "--include=*.md",
-          "-E",
-          `^description:\\s*.*${escapedQuery}`,
-          memoryDir,
-        ]);
-        if (descResults.length > 0) {
-          sections.push("", `## Description matching: ${query}`, ...descResults.slice(0, 20));
-        }
       }
 
       if (grep) {
@@ -488,13 +464,6 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
             "### Matching content:",
             ...contentResults.slice(0, 50)
           );
-        }
-      }
-
-      if (rg) {
-        const rgResults = await runTool("rg", ["-t", "md", rg, memoryDir]);
-        if (rgResults.length > 0) {
-          sections.push("", `## Custom ripgrep: ${rg}`, ...rgResults.slice(0, 50));
         }
       }
 
