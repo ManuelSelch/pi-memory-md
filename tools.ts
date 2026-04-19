@@ -400,7 +400,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
     description: "Search memory files by tags, description, or custom grep/rg pattern",
     parameters: Type.Object({
       query: Type.Optional(Type.String({ description: "Search query for tags and description" })),
-      grep: Type.Optional(Type.String({ description: "Custom grep pattern (use with tool: 'grep')" })),
+      grep: Type.Optional(Type.String({ description: "Custom grep pattern (uses filename + content search)" })),
       rg: Type.Optional(Type.String({ description: "Custom ripgrep pattern (use with tool: 'rg')" })),
     }),
 
