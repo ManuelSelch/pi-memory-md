@@ -46,7 +46,6 @@
     "memoryMdCore.ts",
     "tools.ts",
     "types.ts",
-    "tape",
     "skills",
     "README.md",
     "CHANGELOG.md",

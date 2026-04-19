@@ -58,14 +58,7 @@ export function loadSettings(): MemoryMdSettings {
     systemPrompt: {
       maxTokens: 10000,
       includeProjects: ["current"],
-    },
-    tape: {
-      enabled: false,
-      context: {
-        strategy: "smart",
-        fileLimit: 10,
-      },
-    },
+    }
   };
 
   const globalSettings = path.join(os.homedir(), ".pi", "agent", "settings.json");

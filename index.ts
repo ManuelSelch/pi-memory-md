@@ -11,9 +11,6 @@ import {
   type MemoryMdSettings,
   syncRepository,
 } from "./memoryMdCore.js";
-import { MemoryFileSelector } from "./tape/tape-selector.js";
-import { MemoryTapeService } from "./tape/tape-service.js";
-import { registerAllTapeTools } from "./tape/tape-tools.js";
 import { registerAllMemoryTools } from "./tools.js";
 
 /**
@@ -26,9 +23,6 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   let syncPromise: ReturnType<typeof syncRepository> | null = null;
   let cachedMemoryContext: string | null = null;
   let memoryInjected = false;
-  let tapeService: MemoryTapeService | null = null;
-  let contextSelector: MemoryFileSelector | null = null;
-  let tapeToolsRegistered = false;
 
   function withMemoryTitle(context: string): string {
     return context.trimStart().startsWith("# Project Memory") ? context : `# Project Memory\n\n${context}`;
@@ -66,51 +60,8 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     return true;
   }
 
-  pi.on("tool_result", (_toolEvent, toolCtx) => {
-    if (!tapeService) return;
-
-    const info = tapeService.getInfo();
-    const anchorConfig = settings.tape?.anchor ?? { mode: "threshold", threshold: 25 };
-
-    if (anchorConfig.mode === "threshold" && info.entriesSinceLastAnchor >= (anchorConfig.threshold ?? 25)) {
-      const now = new Date();
-      const timestamp = [
-        now.getFullYear(),
-        String(now.getMonth() + 1).padStart(2, "0"),
-        String(now.getDate()).padStart(2, "0"),
-        String(now.getHours()).padStart(2, "0"),
-        String(now.getMinutes()).padStart(2, "0"),
-        String(now.getSeconds()).padStart(2, "0"),
-      ].join("");
-
-      tapeService.createAnchor(`auto/threshold-${timestamp}`);
-      toolCtx.ui.notify(
-        `Auto-created anchor: ${info.entriesSinceLastAnchor} entries since last anchor (${info.anchorCount} anchors total)`,
-        "info",
-      );
-    }
-  });
-
   pi.on("session_start", async (event, ctx) => {
     Object.assign(settings, loadSettings());
-
-    if (settings.tape?.enabled) {
-      const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const projectName = path.basename(ctx.cwd);
-      const sessionId = ctx.sessionManager.getSessionId();
-      tapeService = MemoryTapeService.create(settings.localPath!, projectName, sessionId, ctx.cwd);
-      tapeService.setSessionManager(ctx.sessionManager);
-      contextSelector = new MemoryFileSelector(tapeService, memoryDir);
-      tapeService.recordSessionStart();
-
-      if (!tapeToolsRegistered) {
-        registerAllTapeTools(pi, tapeService);
-        tapeToolsRegistered = true;
-      }
-    } else {
-      tapeService = null;
-      contextSelector = null;
-    }
 
     if (event.reason === "new" || event.reason === "fork") {
       syncPromise = null;
@@ -127,26 +78,6 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     }
 
     const mode = settings.injection || "message-append";
-    const tapeEnabled = settings.tape?.enabled;
-
-    if (tapeEnabled && tapeService && contextSelector && !memoryInjected) {
-      const { fileLimit = 10, alwaysInclude = [], strategy = "smart" } = settings.tape?.context ?? {};
-
-      const memoryFiles = contextSelector.selectFilesForContext(strategy, fileLimit);
-      const memoryContext = contextSelector.buildContextFromFiles([...alwaysInclude, ...memoryFiles]);
-      const tapeHint = `\n\n---\n💡 Tape Context Management:\nYour conversation history is recorded in tape with anchors (checkpoints).\n- Use tape_info to check current tape status\n- Use tape_search to query historical entries by kind or content\n- Use tape_anchors to list all anchor checkpoints\n- Use tape_handoff to create a new anchor/checkpoint when starting a new task\n`;
-      const fileCount = memoryFiles.length + alwaysInclude.length;
-
-      memoryInjected = true;
-
-      if (mode === "system-prompt") {
-        ctx.ui.notify(`Tape mode: ${fileCount} memory files injected (overrides system prompt)`, "info");
-        return { systemPrompt: memoryContext + tapeHint };
-      }
-
-      ctx.ui.notify(`Tape mode: ${fileCount} memory files injected (message-append)`, "info");
-      return { message: { customType: "pi-memory-md-tape", content: memoryContext + tapeHint, display: false } };
-    }
 
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
