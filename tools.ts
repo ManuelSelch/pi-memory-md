@@ -411,16 +411,8 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
         rg?: string;
       };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const coreDir = path.join(memoryDir, "core");
       const sections: string[] = [];
       const matchedFiles = new Set<string>();
-
-      if (!fs.existsSync(coreDir)) {
-        return {
-          content: [{ type: "text", text: `Memory directory not found: ${coreDir}` }],
-          details: { files: [], count: 0 },
-        };
-      }
 
       if (!query && !grep && !rg) {
         return {
@@ -454,7 +446,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
       }
 
       if (escapedQuery) {
-        const tagResults = await runTool("grep", ["-rn", "--include=*.md", "-E", `^\\s*-\\s*${escapedQuery}`, coreDir]);
+        const tagResults = await runTool("grep", ["-rn", "--include=*.md", "-E", `^\\s*-\\s*${escapedQuery}`, memoryDir]);
         if (tagResults.length > 0) {
           sections.push(`## Tags matching: ${query}`, ...tagResults.slice(0, 20));
         }
@@ -464,7 +456,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
           "--include=*.md",
           "-E",
           `^description:\\s*.*${escapedQuery}`,
-          coreDir,
+          memoryDir,
         ]);
         if (descResults.length > 0) {
           sections.push("", `## Description matching: ${query}`, ...descResults.slice(0, 20));
@@ -477,11 +469,11 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
           "--include=*.md",
           "-E",
           grep,
-          coreDir
+          memoryDir
         ]);
 
         const fileResults = await runTool("find", [
-          coreDir,
+          memoryDir,
           "-iname",
           `*${grep}*`
         ]);
@@ -500,7 +492,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
       }
 
       if (rg) {
-        const rgResults = await runTool("rg", ["-t", "md", rg, coreDir]);
+        const rgResults = await runTool("rg", ["-t", "md", rg, memoryDir]);
         if (rgResults.length > 0) {
           sections.push("", `## Custom ripgrep: ${rg}`, ...rgResults.slice(0, 50));
         }
