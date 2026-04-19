@@ -39,7 +39,7 @@ function expandPath(p: string): string {
 
 export function getMemoryDir(settings: MemoryMdSettings, cwd: string): string {
   localPath = expandPath(settings.localPath || DEFAULT_LOCAL_PATH);
-  return path.join(localPath, path.basename(cwd));
+  return path.join(localPath);
 }
 
 function getRepoName(settings: MemoryMdSettings): string {
