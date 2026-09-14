@@ -13,6 +13,7 @@ import {
   formatReviewReport,
   reviewMemories,
   SIMILARITY_THRESHOLD,
+  suggestKeeper,
   tagSimilarity,
 } from "./memoryReview.js";
 
@@ -59,6 +60,19 @@ describe("collectReviewNotes", () => {
     const paths = collectReviewNotes(memoryDir).map((note) => note.relPath);
     expect(paths).toEqual(["core/user/prefer.md", "projects/a/plan.md"]);
   });
+
+  // Regression: archived notes were re-reported, and the only offered action was
+  // to archive them again, producing archive/archive/...
+  it("skips archive/ so archived notes are never re-reported", () => {
+    write("core/user/prefer.md", { description: "Prefs", tags: ["user"] });
+    write("archive/core/tech/pricing.md", { description: "Pricing researched 2026-09", tags: ["llm"] });
+
+    const paths = collectReviewNotes(memoryDir).map((note) => note.relPath);
+    expect(paths).toEqual(["core/user/prefer.md"]);
+
+    const result = reviewMemories(memoryDir);
+    expect(result.findings.every((finding) => finding.paths.every((p) => !p.startsWith("archive/")))).toBe(true);
+  });
 });
 
 describe("tagSimilarity", () => {
@@ -94,12 +108,15 @@ describe("findDuplicateClusters", () => {
       description: "Impact of current 600/25 boundary",
       tags: ["bluecatbio", "bcx", "vibration", "allowed-unbalance", "fingerprint"],
       updated: "2026-08-28",
+      // Both newest and most substantial, so the suggestion is unambiguous.
+      body: "# Current boundary\n\n".padEnd(2000, "x"),
     });
 
     const findings = findDuplicateClusters(collectReviewNotes(memoryDir));
     expect(findings).toHaveLength(1);
     expect(findings[0]!.paths).toHaveLength(3);
     expect(findings[0]!.suggestedKeep).toBe("projects/bcx/current-boundary-600-25.md");
+    expect(findings[0]!.keeperReason).toBe("most substantial and newest");
   });
 
   it("does not cluster unrelated notes that merely share a folder", () => {
@@ -195,6 +212,40 @@ describe("content rules", () => {
 
     const paths = findStale(collectReviewNotes(memoryDir), now).map((finding) => finding.paths[0]);
     expect(paths).toEqual(["projects/live/old-plan.md"]);
+  });
+});
+
+describe("suggestKeeper", () => {
+  function note(relPath: string, updated: string, bodyBytes: number, description = "d"): Parameters<typeof suggestKeeper>[0][number] {
+    return { relPath, area: "projects", folder: "projects/a", description, title: "", tags: ["x"], updated, bodyBytes };
+  }
+
+  // The real miss: a narrow one-incident report five days newer beat the broad
+  // operational note it did not supersede.
+  it("prefers a much broader note over a slightly newer thin one", () => {
+    const suggestion = suggestKeeper([
+      note("projects/a/incident.md", "2026-09-01", 1874),
+      note("projects/a/operational.md", "2026-08-27", 5349),
+    ]);
+    expect(suggestion.note.relPath).toBe("projects/a/operational.md");
+  });
+
+  it("prefers the newer note when substance is comparable", () => {
+    const suggestion = suggestKeeper([
+      note("projects/a/old.md", "2026-08-27", 2000),
+      note("projects/a/new.md", "2026-09-01", 2000),
+    ]);
+    expect(suggestion.note.relPath).toBe("projects/a/new.md");
+  });
+
+  it("reports when one note is both newest and most substantial", () => {
+    const suggestion = suggestKeeper([
+      note("projects/a/small-old.md", "2026-08-01", 500),
+      note("projects/a/big-new.md", "2026-09-01", 9000),
+    ]);
+    expect(suggestion.note.relPath).toBe("projects/a/big-new.md");
+    expect(suggestion.reason).toContain("newest");
+    expect(suggestion.reason).toContain("most substantial");
   });
 });
 

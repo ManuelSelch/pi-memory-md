@@ -17,7 +17,7 @@ import {
   syncRepository,
   writeMemoryFile,
 } from "./memoryMdCore.js";
-import { formatReviewReport, type Finding, reviewMemories } from "./memoryReview.js";
+import { ARCHIVE_AREA, formatReviewReport, type Finding, reviewMemories } from "./memoryReview.js";
 import type { MemoryFrontmatter, MemoryMdSettings } from "./types.js";
 
 // Re-export types for convenience
@@ -332,10 +332,25 @@ export function registerMemorySync(
 const SKIP = "Skip";
 const STOP = "Stop review";
 
-/** Move a note into archive/, preserving its path so its origin stays readable. */
+/**
+ * Move a note into archive/, preserving its path so its origin stays readable.
+ *
+ * Archiving an already-archived note is refused rather than nesting: doing so
+ * once produced `archive/archive/core/tech/...`, which is nobody's intent.
+ */
 function archiveNote(memoryDir: string, relPath: string): string {
+  const segments = relPath.split(path.sep);
+  if (segments[0] === ARCHIVE_AREA) {
+    throw new Error(`${relPath} is already archived.`);
+  }
+
   const from = path.join(memoryDir, relPath);
-  const to = path.join(memoryDir, "archive", relPath);
+  let to = path.join(memoryDir, ARCHIVE_AREA, relPath);
+  if (fs.existsSync(to)) {
+    const parsed = path.parse(to);
+    to = path.join(parsed.dir, `${parsed.name}-${getCurrentDate()}${parsed.ext}`);
+  }
+
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.renameSync(from, to);
   return path.relative(memoryDir, to);
@@ -375,6 +390,15 @@ function mergeNotes(memoryDir: string, members: string[], targetRel: string): vo
   }
 }
 
+/** Archive one note, reporting failures instead of aborting the whole review. */
+function tryArchive(ctx: ExtensionContext, memoryDir: string, relPath: string, log: string[]): void {
+  try {
+    log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+  } catch (error) {
+    ctx.ui.notify(`Could not archive ${relPath}: ${error instanceof Error ? error.message : String(error)}`, "error");
+  }
+}
+
 async function handleCluster(
   ctx: ExtensionContext,
   memoryDir: string,
@@ -403,7 +427,7 @@ async function handleCluster(
     ]);
     if (how === undefined || how === SKIP) return how !== undefined;
     for (const relPath of rest) {
-      if (how === "Archive them") log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+      if (how === "Archive them") tryArchive(ctx, memoryDir, relPath, log);
       else {
         fs.unlinkSync(path.join(memoryDir, relPath));
         log.push(`deleted ${relPath}`);
@@ -428,7 +452,7 @@ async function handleCluster(
   }
 
   for (const relPath of others) {
-    if (choice === KEEP_ARCHIVE) log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+    if (choice === KEEP_ARCHIVE) tryArchive(ctx, memoryDir, relPath, log);
     else {
       fs.unlinkSync(path.join(memoryDir, relPath));
       log.push(`deleted ${relPath}`);
@@ -450,7 +474,7 @@ async function handleSingle(
   if (choice === undefined || choice === STOP) return false;
   if (choice === SKIP) return true;
 
-  if (choice === ARCHIVE) log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+  if (choice === ARCHIVE) tryArchive(ctx, memoryDir, relPath, log);
   else {
     fs.unlinkSync(path.join(memoryDir, relPath));
     log.push(`deleted ${relPath}`);

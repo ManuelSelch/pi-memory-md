@@ -17,8 +17,17 @@ import { isReadOnlyMemoryPath, listMemoryFiles, readMemoryFile } from "./memoryM
  * separate, explicit step so a false positive can never destroy a memory.
  */
 
-/** Areas the review never reads or proposes changes for. */
-export const REVIEW_EXCLUDED_AREAS: ReadonlySet<string> = new Set(["reference"]);
+/**
+ * Areas the review never reads or proposes changes for.
+ *
+ * `reference/` is externally managed and read-only. `archive/` holds notes that
+ * have already been dealt with: re-reporting them produced findings whose only
+ * available action was to archive an archived note, which nested the path.
+ */
+export const REVIEW_EXCLUDED_AREAS: ReadonlySet<string> = new Set(["reference", "archive"]);
+
+/** Where archived notes are moved to, and the area that must never nest. */
+export const ARCHIVE_AREA = "archive";
 
 export const SIMILARITY_THRESHOLD = 0.3;
 /** Tags on more than this share of a folder describe the folder, not the note. */
@@ -60,6 +69,8 @@ export interface Finding {
   detail: string;
   /** For clusters: the member most likely worth keeping (newest). Never authoritative. */
   suggestedKeep?: string;
+  /** Why that member was suggested. Always a hint, never authoritative. */
+  keeperReason?: string;
 }
 
 function firstHeading(content: string): string {
@@ -119,6 +130,58 @@ function parseDate(value: string | undefined): number | undefined {
 
 function newestFirst(notes: readonly ReviewNote[]): ReviewNote[] {
   return [...notes].sort((a, b) => (parseDate(b.updated) ?? 0) - (parseDate(a.updated) ?? 0));
+}
+
+/** How much substance a note carries, independent of when it was written. */
+function breadth(note: ReviewNote): number {
+  return note.bodyBytes + note.description.length * 4 + note.tags.length * 40;
+}
+
+/** Recency decays over this horizon, so a few days apart barely matters. */
+const RECENCY_HORIZON_DAYS = 180;
+
+export interface KeeperSuggestion {
+  note: ReviewNote;
+  reason: string;
+}
+
+/**
+ * Suggest which member of a cluster is worth keeping.
+ *
+ * Recency alone is not enough. On a real cluster it picked a narrow one-incident
+ * report over the broad "pipeline operational notes" that superseded nothing but
+ * covered far more, purely because the incident report was five days newer. So
+ * breadth and recency are weighted equally and both are shown, leaving the actual
+ * call to a human who can read the descriptions.
+ */
+export function suggestKeeper(cluster: readonly ReviewNote[]): KeeperSuggestion {
+  const breadths = cluster.map(breadth);
+  const times = cluster.map((note) => parseDate(note.updated) ?? 0);
+  const maxBreadth = Math.max(...breadths, 1);
+  const newest = Math.max(...times);
+
+  let best = cluster[0]!;
+  let bestScore = -1;
+
+  cluster.forEach((note, index) => {
+    // Both components keep their magnitude: a note half the size scores half,
+    // and a note five days older loses almost nothing.
+    const b = breadths[index]! / maxBreadth;
+    const daysBehind = (newest - times[index]!) / DAY_MS;
+    const r = Math.max(0, 1 - daysBehind / RECENCY_HORIZON_DAYS);
+    const score = b * 0.5 + r * 0.5;
+    if (score > bestScore) {
+      best = note;
+      bestScore = score;
+    }
+  });
+
+  const bestIndex = cluster.indexOf(best);
+  const descriptors: string[] = [];
+  if (breadths[bestIndex] === maxBreadth) descriptors.push("most substantial");
+  if (times[bestIndex] === newest) descriptors.push("newest");
+  const reason = descriptors.length > 0 ? descriptors.join(" and ") : "best balance of substance and recency";
+  return { note: best, reason };
 }
 
 /** Tags that actually distinguish notes inside a folder.
@@ -201,15 +264,20 @@ export function findDuplicateClusters(notes: readonly ReviewNote[]): Finding[] {
       }
       const average = scores.reduce((sum, value) => sum + value, 0) / scores.length;
       const ranked = newestFirst(cluster);
+      const keeper = suggestKeeper(cluster);
 
       findings.push({
         kind: "duplicates",
         severity: 100 + cluster.length,
         paths: ranked.map((note) => note.relPath),
-        suggestedKeep: ranked[0]!.relPath,
+        suggestedKeep: keeper.note.relPath,
+        keeperReason: keeper.reason,
         summary: `${folder}: ${cluster.length} notes with overlapping tags (avg similarity ${average.toFixed(2)})`,
         detail: ranked
-          .map((note) => `${note.relPath} — updated ${note.updated ?? "unknown"} — ${note.description || note.title}`)
+          .map(
+            (note) =>
+              `${note.relPath} — updated ${note.updated ?? "unknown"}, ${note.bodyBytes} bytes — ${note.description || note.title}`,
+          )
           .join("\n"),
       });
     }
@@ -352,9 +420,9 @@ const KIND_TITLES: Record<FindingKind, string> = {
 };
 
 export function formatReviewReport(result: ReviewResult): string {
-  const excluded = [...REVIEW_EXCLUDED_AREAS].map((area) => `${area}/`).join(", ");
+  const excluded = [...REVIEW_EXCLUDED_AREAS].map((area) => `${area}/`).sort().join(", ");
   if (result.findings.length === 0) {
-    return `# Memory Review\n\nNo cleanup candidates across ${result.noteCount} notes. ${excluded} excluded (read-only).`;
+    return `# Memory Review\n\nNo cleanup candidates across ${result.noteCount} notes. Not reviewed: ${excluded}.`;
   }
 
   const lines = [
@@ -362,7 +430,7 @@ export function formatReviewReport(result: ReviewResult): string {
     "",
     `${result.totalFindings} finding(s) across ${result.noteCount} notes` +
       (result.totalFindings > result.findings.length ? `, showing ${result.findings.length}` : "") +
-      `. ${excluded} excluded (read-only).`,
+      `. Not reviewed: ${excluded}.`,
     "",
   ];
 
@@ -373,7 +441,9 @@ export function formatReviewReport(result: ReviewResult): string {
     for (const finding of group) {
       lines.push(`- **${finding.summary}**`);
       for (const line of finding.detail.split("\n")) lines.push(`  ${line}`);
-      if (finding.suggestedKeep) lines.push(`  Newest, likely the keeper: \`${finding.suggestedKeep}\``);
+      if (finding.suggestedKeep) {
+        lines.push(`  Possible keeper (${finding.keeperReason ?? "heuristic"}): \`${finding.suggestedKeep}\` — check the descriptions above before trusting this.`);
+      }
       lines.push("");
     }
   }
