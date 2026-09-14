@@ -5,6 +5,7 @@ import { keyHint } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import {
+  buildMemoryContextPreview,
   createDefaultFiles,
   ensureDirectoryStructure,
   getCurrentDate,
@@ -46,6 +47,67 @@ function formatValue(value: unknown): string {
   if (Array.isArray(value)) return `[${value.join(", ")}]`;
   if (typeof value === "object" && value !== null) return "{...}";
   return String(value);
+}
+
+function oneLine(text: string, maxLength = 180): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > maxLength ? `${flat.slice(0, maxLength - 1)}…` : flat;
+}
+
+function firstMarkdownHeading(content: string): string | undefined {
+  return content
+    .split("\n")
+    .map((line) => line.match(/^#{1,3}\s+(.+)$/)?.[1]?.trim())
+    .find(Boolean);
+}
+
+function generateProjectsIndex(memoryDir: string): { path: string; count: number; groups: number } {
+  const projectsDir = path.join(memoryDir, "projects");
+  const indexPath = path.join(projectsDir, "INDEX.md");
+  fs.mkdirSync(projectsDir, { recursive: true });
+
+  const files = listMemoryFiles(projectsDir)
+    .filter((filePath) => path.basename(filePath).toLocaleLowerCase() !== "index.md")
+    .sort((a, b) => path.relative(projectsDir, a).localeCompare(path.relative(projectsDir, b)));
+
+  const groups = new Map<string, string[]>();
+  for (const filePath of files) {
+    const relToProjects = path.relative(projectsDir, filePath);
+    const group = relToProjects.includes(path.sep) ? relToProjects.split(path.sep)[0] : "root";
+    const memory = readMemoryFile(filePath);
+    const relPath = path.relative(memoryDir, filePath);
+    const description = memory?.frontmatter.description || firstMarkdownHeading(memory?.content ?? "") || "No description";
+    const tags = memory?.frontmatter.tags?.length ? ` — tags: ${memory.frontmatter.tags.join(", ")}` : "";
+    const updated = memory?.frontmatter.updated ? ` — updated: ${memory.frontmatter.updated}` : "";
+    const entry = `- \`${relPath}\` — ${oneLine(description)}${tags}${updated}`;
+
+    const existing = groups.get(group) ?? [];
+    existing.push(entry);
+    groups.set(group, existing);
+  }
+
+  const lines = [
+    "# Projects Memory Index",
+    "",
+    "Generated from markdown frontmatter and paths. Do not edit manually.",
+    "Use memory_read with a listed path to view the full note.",
+    "",
+  ];
+
+  for (const [group, entries] of Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+    lines.push(`## ${group}`, "", ...entries, "");
+  }
+
+  writeMemoryFile(indexPath, lines.join("\n").trimEnd() + "\n", {
+    description: "Generated index of project memory files",
+    tags: ["index", "projects", "generated"],
+    created: fs.existsSync(indexPath) ? readMemoryFile(indexPath)?.frontmatter.created || getCurrentDate() : getCurrentDate(),
+    updated: getCurrentDate(),
+    generated: true,
+    generator: "pi-memory-md",
+  });
+
+  return { path: indexPath, count: files.length, groups: groups.size };
 }
 
 function buildToolCallText(name: string, args: Record<string, unknown>, theme: Theme): string {
@@ -199,6 +261,10 @@ export function registerMemorySync(
       }
 
       if (action === "push") {
+        if (fs.existsSync(path.join(memoryDir, "projects"))) {
+          generateProjectsIndex(memoryDir);
+        }
+
         const statusResult = await gitExec(pi, localPath, ["status", "--porcelain"]);
         const hasChanges = statusResult.stdout.trim().length > 0;
 
@@ -257,6 +323,33 @@ export function registerMemorySync(
   });
 }
 
+export function registerMemoryContext(pi: ExtensionAPI, settings: MemoryMdSettings): void {
+  pi.registerTool({
+    name: "memory_context",
+    label: "Memory Context",
+    description: "Preview what memory index/context is currently injected for the agent",
+    parameters: Type.Object({
+      mode: Type.Optional(
+        Type.Union([Type.Literal("summary"), Type.Literal("exact")], {
+          description: "summary shows counts and areas; exact shows the exact injected memory text",
+        }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { mode = "summary" } = params as { mode?: "summary" | "exact" };
+      const text = buildMemoryContextPreview(settings, ctx.cwd, mode);
+      return {
+        content: [{ type: "text", text }],
+        details: { mode },
+      };
+    },
+
+    renderCall: (args, theme) => new Text(buildToolCallText("memory_context", args, theme), 0, 0),
+    renderResult: (result, options, theme) => renderCollapsed("Memory context preview", getResultText(result), options, theme),
+  });
+}
+
 export function registerMemoryRead(pi: ExtensionAPI, settings: MemoryMdSettings): void {
   pi.registerTool({
     name: "memory_read",
@@ -304,12 +397,17 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
   pi.registerTool({
     name: "memory_write",
     label: "Memory Write",
-    description: "Create or update a memory file with YAML frontmatter",
+    description: "Create, update, or append to a memory file with YAML frontmatter",
     parameters: Type.Object({
       path: Type.String({ description: "Relative path to memory file (e.g., 'core/user/identity.md')" }),
       content: Type.String({ description: "Markdown content" }),
       description: Type.String({ description: "Description for frontmatter" }),
       tags: Type.Optional(Type.Array(Type.String())),
+      mode: Type.Optional(
+        Type.Union([Type.Literal("overwrite"), Type.Literal("append")], {
+          description: "Write mode. Defaults to overwrite; use append to add to an existing memory file.",
+        }),
+      ),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -318,7 +416,8 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
         content,
         description,
         tags,
-      } = params as { path: string; content: string; description: string; tags?: string[] };
+        mode = "overwrite",
+      } = params as { path: string; content: string; description: string; tags?: string[]; mode?: "overwrite" | "append" };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
       const fullPath = resolvePathWithin(memoryDir, relPath);
 
@@ -339,10 +438,19 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
         ...(tags && { tags }),
       };
 
-      writeMemoryFile(fullPath, content, frontmatter);
+      const nextContent = mode === "append" && existing ? `${existing.content.trimEnd()}\n\n${content.trimStart()}` : content;
+      writeMemoryFile(fullPath, nextContent, frontmatter);
+      const indexResult = relPath.startsWith("projects/") && path.basename(relPath).toLocaleLowerCase() !== "index.md"
+        ? generateProjectsIndex(memoryDir)
+        : undefined;
       return {
-        content: [{ type: "text", text: `Memory file written: ${relPath}` }],
-        details: { path: fullPath, frontmatter },
+        content: [
+          {
+            type: "text",
+            text: `Memory file ${mode === "append" ? "appended" : "written"}: ${relPath}${indexResult ? `\nUpdated projects index: ${path.relative(memoryDir, indexResult.path)}` : ""}`,
+          },
+        ],
+        details: { path: fullPath, frontmatter, index: indexResult },
       };
     },
 
@@ -353,6 +461,66 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
         description: details?.frontmatter?.description,
         tags: details?.frontmatter?.tags,
       });
+    },
+  });
+}
+
+export function registerMemoryDelete(pi: ExtensionAPI, settings: MemoryMdSettings): void {
+  pi.registerTool({
+    name: "memory_delete",
+    label: "Memory Delete",
+    description: "Delete a memory file by path",
+    parameters: Type.Object({
+      path: Type.String({ description: "Relative path to memory file to delete" }),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { path: relPath } = params as { path: string };
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
+      const fullPath = resolvePathWithin(memoryDir, relPath);
+
+      if (!fullPath) {
+        return {
+          content: [{ type: "text", text: `Invalid memory path: ${relPath}` }],
+          details: { error: true },
+        };
+      }
+
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+        return {
+          content: [{ type: "text", text: `Memory file not found: ${relPath}` }],
+          details: { error: true },
+        };
+      }
+
+      if (!fullPath.endsWith(".md")) {
+        return {
+          content: [{ type: "text", text: `Refusing to delete non-markdown file: ${relPath}` }],
+          details: { error: true },
+        };
+      }
+
+      fs.unlinkSync(fullPath);
+      const indexResult = relPath.startsWith("projects/") && path.basename(relPath).toLocaleLowerCase() !== "index.md"
+        ? generateProjectsIndex(memoryDir)
+        : undefined;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Memory file deleted: ${relPath}${indexResult ? `\nUpdated projects index: ${path.relative(memoryDir, indexResult.path)}` : ""}`,
+          },
+        ],
+        details: { path: fullPath, index: indexResult },
+      };
+    },
+
+    renderCall: (args, theme) => new Text(buildToolCallText("memory_delete", args, theme), 0, 0),
+    renderResult: (result, options, theme) => {
+      if (options.isPartial) return renderText(theme.fg("warning", "Deleting..."));
+      const details = result.details as { error?: boolean } | undefined;
+      const text = getResultText(result);
+      return renderText(theme.fg(details?.error ? "error" : "success", text));
     },
   });
 }
@@ -393,97 +561,148 @@ export function registerMemoryList(pi: ExtensionAPI, settings: MemoryMdSettings)
   });
 }
 
+function normalizeSearchText(text: string): string {
+  return text.toLocaleLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function getSearchTerms(query: string): string[] {
+  return Array.from(
+    new Set(
+      normalizeSearchText(query)
+        .split(/[^\p{L}\p{N}_+-]+/u)
+        .map((term) => term.trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function countOccurrences(text: string, term: string): number {
+  if (!term) return 0;
+  let count = 0;
+  let index = text.indexOf(term);
+  while (index !== -1) {
+    count++;
+    index = text.indexOf(term, index + term.length);
+  }
+  return count;
+}
+
+function buildSnippet(content: string, terms: string[]): string {
+  const normalizedContent = normalizeSearchText(content);
+  let bestIndex = -1;
+  for (const term of terms) {
+    const index = normalizedContent.indexOf(term);
+    if (index !== -1 && (bestIndex === -1 || index < bestIndex)) bestIndex = index;
+  }
+
+  if (bestIndex === -1) return content.replace(/\s+/g, " ").trim().slice(0, 180);
+
+  const start = Math.max(0, bestIndex - 70);
+  const end = Math.min(content.length, bestIndex + 170);
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < content.length ? "…" : "";
+  return `${prefix}${content.slice(start, end).replace(/\s+/g, " ").trim()}${suffix}`;
+}
+
 export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSettings): void {
   pi.registerTool({
     name: "memory_search",
     label: "Memory Search",
-    description: "Search memory files by tags, description, or custom grep/rg pattern",
+    description: "Ranked search over memory file paths, tags, descriptions, and content",
     parameters: Type.Object({
-      grep: Type.String({ description: "Custom grep pattern (uses filename + content search)" }),
+      grep: Type.String({ description: "Search query; multiple words are ranked across path, tags, description, and content" }),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { grep} = params as {
-        grep?: string;
-      };
+      const { grep } = params as { grep?: string };
+      const query = grep?.trim() ?? "";
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const sections: string[] = [];
-      const matchedFiles = new Set<string>();
-      const searchLabel = grep;
+      const terms = getSearchTerms(query);
 
-      if (!grep) {
+      if (!query || terms.length === 0) {
         return {
           content: [{ type: "text", text: "Provide grep to search memory files." }],
           details: { files: [], count: 0 },
         };
       }
 
-      async function runTool(tool: string, args: string[]): Promise<string[]> {
-        const { stdout } = await pi.exec(tool, args).catch(() => ({ stdout: "" }));
-        const results: string[] = [];
+      const scored = listMemoryFiles(memoryDir)
+        .map((filePath) => {
+          const memory = readMemoryFile(filePath);
+          if (!memory) return null;
 
-        for (const line of (stdout || "").trim().split("\n")) {
-          if (!line) continue;
+          const relPath = path.relative(memoryDir, filePath);
+          const tagText = memory.frontmatter.tags?.join(" ") ?? "";
+          const description = memory.frontmatter.description ?? "";
+          const fields = {
+            path: normalizeSearchText(relPath),
+            tags: normalizeSearchText(tagText),
+            description: normalizeSearchText(description),
+            content: normalizeSearchText(memory.content),
+          };
 
-          const separatorIndex = line.indexOf(":");
-          if (separatorIndex === -1) {
-            results.push(line);
-            continue;
+          let score = 0;
+          const reasons: string[] = [];
+          let matchedTerms = 0;
+
+          for (const term of terms) {
+            let termScore = 0;
+            if (fields.path.includes(term)) termScore += 40;
+            if (fields.tags.includes(term)) termScore += 30;
+            if (fields.description.includes(term)) termScore += 20;
+            const bodyHits = countOccurrences(fields.content, term);
+            if (bodyHits > 0) termScore += Math.min(10, bodyHits) * 2;
+
+            if (termScore > 0) matchedTerms++;
+            score += termScore;
           }
 
-          const matchedFilePath = line.slice(0, separatorIndex);
-          matchedFiles.add(matchedFilePath);
-          results.push(`${path.relative(memoryDir, matchedFilePath)}: ${line.slice(separatorIndex + 1).trim()}`);
-        }
+          if (matchedTerms === terms.length) score += 25;
+          else if (terms.length > 1 && matchedTerms === 0) return null;
 
-        return results;
-      }
+          if (score === 0) return null;
 
-      if (grep) {
-        const contentResults = await runTool("grep", [
-          "-rn",
-          "--include=*.md",
-          "-E",
-          grep,
-          memoryDir
-        ]);
+          if (terms.some((term) => fields.path.includes(term))) reasons.push("path");
+          if (terms.some((term) => fields.tags.includes(term))) reasons.push("tags");
+          if (terms.some((term) => fields.description.includes(term))) reasons.push("description");
+          if (terms.some((term) => fields.content.includes(term))) reasons.push("content");
 
-        const fileResults = await runTool("find", [
-          memoryDir,
-          "-iname",
-          `*${grep}*`
-        ]);
+          return {
+            relPath,
+            score,
+            description,
+            tags: memory.frontmatter.tags ?? [],
+            reasons,
+            snippet: buildSnippet(memory.content, terms),
+          };
+        })
+        .filter((result): result is NonNullable<typeof result> => result !== null)
+        .sort((a, b) => b.score - a.score || a.relPath.localeCompare(b.relPath));
 
-        if (contentResults.length > 0 || fileResults.length > 0) {
-          sections.push(
-            "",
-            `## Custom grep: ${grep}`,
-            "### Matching file names:",
-            ...fileResults.slice(0, 20),
-            "",
-            "### Matching content:",
-            ...contentResults.slice(0, 50)
-          );
-        }
-      }
-
-      const fileList = Array.from(matchedFiles).map((filePath) => path.relative(memoryDir, filePath));
-
-      if (sections.length === 0) {
+      if (scored.length === 0) {
         return {
-          content: [{ type: "text", text: `No results found for "${searchLabel}".` }],
+          content: [{ type: "text", text: `No results found for "${query}".` }],
           details: { files: [], count: 0 },
         };
       }
 
+      const top = scored.slice(0, 15);
+      const lines = [
+        `Found ${scored.length} file(s) matching "${query}". Showing top ${top.length}.`,
+        "",
+        ...top.flatMap((result, index) => [
+          `${index + 1}. ${result.relPath} (score ${result.score}; ${result.reasons.join(", ")})`,
+          `   Description: ${result.description || "No description"}`,
+          `   Tags: ${result.tags.join(", ") || "none"}`,
+          result.snippet ? `   Snippet: ${result.snippet}` : "",
+          "",
+        ]),
+        "Use memory_read to view full content.",
+      ];
+
       return {
-        content: [
-          {
-            type: "text",
-            text: `Found ${fileList.length} file(s) matching "${searchLabel}":\n\n${sections.join("\n")}\n\nUse memory_read to view full content.`,
-          },
-        ],
-        details: { files: fileList, count: fileList.length },
+        content: [{ type: "text", text: lines.filter((line) => line !== "").join("\n") }],
+        details: { files: top.map((result) => result.relPath), count: scored.length },
       };
     },
 
@@ -492,6 +711,52 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
       const details = result.details as { count?: number; files?: string[] };
       const summary = details?.count ? `${details.count} result(s)` : "Search complete";
       return renderCollapsed(summary, getResultText(result), options, theme);
+    },
+  });
+}
+
+export function registerMemoryIndex(pi: ExtensionAPI, settings: MemoryMdSettings): void {
+  pi.registerTool({
+    name: "memory_index",
+    label: "Memory Index",
+    description: "Regenerate generated memory index files",
+    parameters: Type.Object({
+      scope: Type.Optional(
+        Type.Union([Type.Literal("all"), Type.Literal("projects")], {
+          description: "Index scope. Currently 'all' and 'projects' both regenerate projects/INDEX.md.",
+        }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { scope = "all" } = params as { scope?: "all" | "projects" };
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
+
+      if (!fs.existsSync(memoryDir)) {
+        return {
+          content: [{ type: "text", text: `Memory directory not found: ${memoryDir}` }],
+          details: { error: true },
+        };
+      }
+
+      const result = generateProjectsIndex(memoryDir);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Regenerated memory index (${scope}):\n- ${path.relative(memoryDir, result.path)} (${result.count} files across ${result.groups} group(s))`,
+          },
+        ],
+        details: { scope, projects: result },
+      };
+    },
+
+    renderCall: (args, theme) => new Text(buildToolCallText("memory_index", args, theme), 0, 0),
+    renderResult: (result, options, theme) => {
+      if (options.isPartial) return renderText(theme.fg("warning", "Indexing..."));
+      const details = result.details as { error?: boolean } | undefined;
+      const text = getResultText(result);
+      return renderText(theme.fg(details?.error ? "error" : "success", text));
     },
   });
 }
@@ -575,30 +840,45 @@ export function registerMemoryCheck(pi: ExtensionAPI, settings: MemoryMdSettings
         };
       }
 
-      const { execSync } = await import("node:child_process");
-      let treeOutput = "";
-      try {
-        treeOutput = execSync(`tree -L 3 -I "node_modules" "${memoryDir}"`, { encoding: "utf-8" });
-      } catch {
-        try {
-          treeOutput = execSync(`find "${memoryDir}" -type d -not -path "*/node_modules/*" | head -20`, {
-            encoding: "utf-8",
-          });
-        } catch {
-          treeOutput = "Unable to generate directory tree. Please check permissions.";
-        }
+      const files = listMemoryFiles(memoryDir);
+      const topLevelDirs = fs
+        .readdirSync(memoryDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => {
+          const dirPath = path.join(memoryDir, entry.name);
+          const count = listMemoryFiles(dirPath).length;
+          return { name: entry.name, count };
+        });
+
+      const coreDirs = fs.existsSync(path.join(memoryDir, "core"))
+        ? fs
+            .readdirSync(path.join(memoryDir, "core"), { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => {
+              const dirPath = path.join(memoryDir, "core", entry.name);
+              const count = listMemoryFiles(dirPath).length;
+              return `  - core/${entry.name}/ (${count} files)`;
+            })
+        : [];
+
+      const lines = [
+        `Memory summary for project: ${path.basename(ctx.cwd)}`,
+        `Path: ${memoryDir}`,
+        `Total markdown files: ${files.length}`,
+        "",
+        "Top-level areas:",
+        ...topLevelDirs.map((dir) => `  - ${dir.name}/ (${dir.count} files)`),
+      ];
+
+      if (coreDirs.length > 0) {
+        lines.push("", "Core subdirectories:", ...coreDirs);
       }
 
-      const files = listMemoryFiles(memoryDir);
-      const relPaths = files.map((f) => path.relative(memoryDir, f));
+      lines.push("", "Use memory_list with a directory argument for detailed file names.");
+
       return {
-        content: [
-          {
-            type: "text",
-            text: `Memory directory structure for project: ${path.basename(ctx.cwd)}\n\nPath: ${memoryDir}\n\n${treeOutput}\n\nMemory files (${relPaths.length}):\n${relPaths.map((p) => `  ${p}`).join("\n")}`,
-          },
-        ],
-        details: { path: memoryDir, fileCount: relPaths.length },
+        content: [{ type: "text", text: lines.join("\n") }],
+        details: { path: memoryDir, fileCount: files.length, areas: topLevelDirs },
       };
     },
 
@@ -622,10 +902,13 @@ export function registerAllMemoryTools(
   isRepoInitialized: { value: boolean },
 ): void {
   registerMemorySync(pi, settings, isRepoInitialized);
+  registerMemoryContext(pi, settings);
   registerMemoryRead(pi, settings);
   registerMemoryWrite(pi, settings);
+  registerMemoryDelete(pi, settings);
   registerMemoryList(pi, settings);
   registerMemorySearch(pi, settings);
+  registerMemoryIndex(pi, settings);
   registerMemoryInit(pi, settings, isRepoInitialized);
   registerMemoryCheck(pi, settings);
 }

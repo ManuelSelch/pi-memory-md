@@ -3,6 +3,7 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import {
   buildMemoryContext,
+  buildMemoryContextPreview,
   createDefaultFiles,
   ensureDirectoryStructure,
   getMemoryDir,
@@ -24,8 +25,23 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   let cachedMemoryContext: string | null = null;
   let memoryInjected = false;
 
+  /** Count core index entries only; the context also lists external areas. */
+  function countCoreEntries(context: string): number {
+    return context.split("\n").filter((line) => line.startsWith("- core/")).length;
+  }
+
   function withMemoryTitle(context: string): string {
     return context.trimStart().startsWith("# Project Memory") ? context : `# Project Memory\n\n${context}`;
+  }
+
+  function countMarkdownFiles(dir: string): number {
+    let count = 0;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) count += countMarkdownFiles(fullPath);
+      else if (entry.isFile() && entry.name.endsWith(".md")) count++;
+    }
+    return count;
   }
 
   function initMemoryContext(
@@ -81,7 +97,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
 
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
-      const fileCount = cachedMemoryContext.split("\n").filter((line) => line.startsWith("-")).length;
+      const fileCount = countCoreEntries(cachedMemoryContext);
       ctx.ui.notify(`Memory injected: ${fileCount} files (${mode})`, "info");
 
       if (mode === "message-append") {
@@ -150,6 +166,18 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     },
   });
 
+  pi.registerCommand("memory-context", {
+    description: "Preview the memory context injected for the agent",
+    handler: async (args, ctx) => {
+      const mode = args.trim().toLocaleLowerCase() === "exact" ? "exact" : "summary";
+      pi.sendMessage({
+        customType: "pi-memory-md-context-preview",
+        content: buildMemoryContextPreview(settings, ctx.cwd, mode),
+        display: true,
+      });
+    },
+  });
+
   pi.registerCommand("memory-refresh", {
     description: "Refresh memory context from files",
     handler: async (_args, ctx) => {
@@ -164,7 +192,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       memoryInjected = false;
 
       const mode = settings.injection || "message-append";
-      const fileCount = memoryContext.split("\n").filter((line) => line.startsWith("-")).length;
+      const fileCount = countCoreEntries(memoryContext);
 
       if (mode === "message-append") {
         pi.sendMessage({
@@ -180,7 +208,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("memory-check", {
-    description: "Check memory folder structure",
+    description: "Show compact memory folder summary",
     handler: async (_args, ctx) => {
       const memoryDir = getMemoryDir(settings, ctx.cwd);
 
@@ -189,20 +217,30 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      const { execSync } = await import("node:child_process");
-      let treeOutput = "";
+      const topLevelDirs = fs
+        .readdirSync(memoryDir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+        .map((entry) => {
+          const dirPath = path.join(memoryDir, entry.name);
+          const count = fs.existsSync(dirPath) ? countMarkdownFiles(dirPath) : 0;
+          return `- **${entry.name}/** — ${count} markdown files`;
+        });
 
-      try {
-        treeOutput = execSync(`tree -L 3 -I "node_modules" "${memoryDir}"`, { encoding: "utf-8" });
-      } catch {
-        try {
-          treeOutput = execSync(`find "${memoryDir}" -type d -not -path "*/node_modules/*"`, { encoding: "utf-8" });
-        } catch {
-          treeOutput = "Unable to generate directory tree.";
-        }
-      }
-
-      ctx.ui.notify(treeOutput.trim(), "info");
+      pi.sendMessage({
+        customType: "pi-memory-md-check",
+        content: [
+          "# Memory Check",
+          "",
+          `Path: \`${memoryDir}\``,
+          "",
+          "## Top-level areas",
+          "",
+          ...topLevelDirs,
+          "",
+          "Use `/memory-context` to see what is injected into the agent context.",
+        ].join("\n"),
+        display: true,
+      });
     },
   });
 }

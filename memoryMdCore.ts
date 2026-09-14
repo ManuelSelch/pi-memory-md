@@ -275,39 +275,177 @@ function createDefaultFiles(memoryDir: string): void {
 
 export { createDefaultFiles, ensureDirectoryStructure };
 
+const DEFAULT_MAX_TOKENS = 10000;
+const CHARS_PER_TOKEN = 4;
+
+/** Collapse a description onto a single line so every entry costs one row. */
+function singleLine(text: string, maxChars = 160): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
+}
+
+/** Count .md files per top-level directory outside of core/. */
+function summarizeExternalAreas(memoryDir: string): string[] {
+  if (!fs.existsSync(memoryDir)) return [];
+
+  return fs
+    .readdirSync(memoryDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== "core" && !entry.name.startsWith("."))
+    .map((entry) => {
+      const count = listMemoryFiles(path.join(memoryDir, entry.name)).length;
+      return `- ${entry.name}/ (${count} files)`;
+    })
+    .filter((line) => !line.endsWith("(0 files)"));
+}
+
+/**
+ * Build the always-injected core context.
+ *
+ * This is an *index* only: path, description and tags per core file. Bodies stay
+ * on disk and are pulled in on demand with memory_read, so core can grow without
+ * the per-session cost growing with it.
+ */
 export function buildMemoryContext(settings: MemoryMdSettings, cwd: string): string {
+  return buildMemoryContextParts(settings, cwd).context;
+}
+
+function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
+  context: string;
+  memoryDir: string;
+  coreFileCount: number;
+  injectedCoreEntries: number;
+  omittedCoreEntries: number;
+  externalAreas: string[];
+  budgetTokens: number;
+  estimatedTokens: number;
+} {
   const memoryDir = getMemoryDir(settings, cwd);
   const coreDir = path.join(memoryDir, "core");
+  const budgetTokens = settings.systemPrompt?.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   if (!fs.existsSync(coreDir)) {
-    return "";
+    return {
+      context: "",
+      memoryDir,
+      coreFileCount: 0,
+      injectedCoreEntries: 0,
+      omittedCoreEntries: 0,
+      externalAreas: [],
+      budgetTokens,
+      estimatedTokens: 0,
+    };
   }
 
   const files = listMemoryFiles(coreDir);
   if (files.length === 0) {
-    return "";
+    return {
+      context: "",
+      memoryDir,
+      coreFileCount: 0,
+      injectedCoreEntries: 0,
+      omittedCoreEntries: 0,
+      externalAreas: [],
+      budgetTokens,
+      estimatedTokens: 0,
+    };
   }
 
-  const lines: string[] = [
+  const budget = budgetTokens * CHARS_PER_TOKEN;
+  const header: string[] = [
     "# Project Memory",
     "",
-    "Available memory files (use memory_read to view full content):",
+    "Core memory index. Read a file with memory_read before relying on its details.",
     "",
   ];
 
+  const entries: string[] = [];
+  let used = header.join("\n").length;
+  let omitted = 0;
+
   for (const filePath of files) {
     const memory = readMemoryFile(filePath);
-    if (memory) {
-      const relPath = path.relative(memoryDir, filePath);
-      const { description, tags } = memory.frontmatter;
-      const tagStr = tags?.join(", ") || "none";
-      lines.push(`- ${relPath}`);
-      lines.push(`  Description: ${description}`);
-      lines.push(`  Tags: ${tagStr}`);
-      lines.push(`  Content: ${memory.content}`);
-      lines.push("");
+    if (!memory) continue;
+
+    const relPath = path.relative(memoryDir, filePath);
+    const { description, tags } = memory.frontmatter;
+    const tagStr = tags?.length ? ` [${tags.join(", ")}]` : "";
+    const entry = `- ${relPath} — ${singleLine(description || "No description")}${tagStr}`;
+
+    if (used + entry.length + 1 > budget) {
+      omitted++;
+      continue;
     }
+
+    entries.push(entry);
+    used += entry.length + 1;
   }
 
-  return lines.join("\n");
+  const lines = [...header, ...entries];
+
+  if (omitted > 0) {
+    lines.push(`- … ${omitted} further core file(s) omitted for space; use memory_list to see them.`);
+  }
+
+  const external = summarizeExternalAreas(memoryDir);
+  if (external.length > 0) {
+    lines.push("", "External memory (not loaded; find it with memory_search, then memory_read):", "", ...external);
+  }
+
+  const context = lines.join("\n");
+  return {
+    context,
+    memoryDir,
+    coreFileCount: files.length,
+    injectedCoreEntries: entries.length,
+    omittedCoreEntries: omitted,
+    externalAreas: external,
+    budgetTokens,
+    estimatedTokens: Math.ceil(context.length / CHARS_PER_TOKEN),
+  };
+}
+
+export function buildMemoryContextPreview(
+  settings: MemoryMdSettings,
+  cwd: string,
+  mode: "summary" | "exact" = "summary",
+): string {
+  const parts = buildMemoryContextParts(settings, cwd);
+  if (!parts.context) {
+    return `# Memory Context Preview\n\nMemory context is empty.\n\nPath: \`${parts.memoryDir}\``;
+  }
+
+  if (mode === "exact") {
+    return [
+      "# Memory Context Preview",
+      "",
+      `Path: \`${parts.memoryDir}\``,
+      `Estimated size: **${parts.estimatedTokens} tokens** / budget **${parts.budgetTokens} tokens**`,
+      "",
+      "## Exact injected context",
+      "",
+      parts.context,
+    ].join("\n");
+  }
+
+  return [
+    "# Memory Context Preview",
+    "",
+    `Path: \`${parts.memoryDir}\``,
+    `Estimated size: **${parts.estimatedTokens} tokens** / budget **${parts.budgetTokens} tokens**`,
+    "",
+    "## Injected core index",
+    "",
+    `- Core markdown files: **${parts.coreFileCount}**`,
+    `- Injected index entries: **${parts.injectedCoreEntries}**`,
+    `- Omitted by budget: **${parts.omittedCoreEntries}**`,
+    "- Full file bodies are **not** injected; use `memory_read` for details.",
+    "",
+    "## External memory shown in context",
+    "",
+    ...(parts.externalAreas.length > 0 ? parts.externalAreas : ["- none"]),
+    "",
+    "## Exact context",
+    "",
+    "Use `memory_context({ mode: \"exact\" })` or `/memory-context exact` to view the exact injected text.",
+  ].join("\n");
 }
