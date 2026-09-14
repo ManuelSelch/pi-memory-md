@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { keyHint } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import {
+  assertWritable,
   buildMemoryContextPreview,
   createDefaultFiles,
   ensureDirectoryStructure,
@@ -16,6 +17,7 @@ import {
   syncRepository,
   writeMemoryFile,
 } from "./memoryMdCore.js";
+import { formatReviewReport, type Finding, reviewMemories } from "./memoryReview.js";
 import type { MemoryFrontmatter, MemoryMdSettings } from "./types.js";
 
 // Re-export types for convenience
@@ -323,6 +325,225 @@ export function registerMemorySync(
   });
 }
 
+// ============================================================================
+// Interactive review
+// ============================================================================
+
+const SKIP = "Skip";
+const STOP = "Stop review";
+
+/** Move a note into archive/, preserving its path so its origin stays readable. */
+function archiveNote(memoryDir: string, relPath: string): string {
+  const from = path.join(memoryDir, relPath);
+  const to = path.join(memoryDir, "archive", relPath);
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.renameSync(from, to);
+  return path.relative(memoryDir, to);
+}
+
+/**
+ * Concatenate a cluster into one note.
+ *
+ * Bodies are kept verbatim under per-source headings rather than summarised:
+ * merging must never silently lose content, and a human or a later agent pass
+ * can tidy the result once it is all in one file.
+ */
+function mergeNotes(memoryDir: string, members: string[], targetRel: string): void {
+  const sources = members.map((relPath) => ({ relPath, memory: readMemoryFile(path.join(memoryDir, relPath)) }));
+  const keeper = sources.find((source) => source.relPath === targetRel) ?? sources[0]!;
+
+  const tags = Array.from(new Set(sources.flatMap((source) => source.memory?.frontmatter.tags ?? [])));
+  const description = keeper.memory?.frontmatter.description || `Merged notes from ${members.length} files`;
+
+  const body = sources
+    .map(({ relPath, memory }) => `## From ${path.basename(relPath)}\n\n${(memory?.content ?? "").trim()}`)
+    .join("\n\n");
+
+  const targetPath = path.join(memoryDir, targetRel);
+  const created = readMemoryFile(targetPath)?.frontmatter.created;
+  writeMemoryFile(targetPath, `${body}\n`, {
+    description,
+    tags,
+    created: created || getCurrentDate(),
+    updated: getCurrentDate(),
+  });
+
+  for (const { relPath } of sources) {
+    if (relPath === targetRel) continue;
+    const full = path.join(memoryDir, relPath);
+    if (fs.existsSync(full)) fs.unlinkSync(full);
+  }
+}
+
+async function handleCluster(
+  ctx: ExtensionContext,
+  memoryDir: string,
+  finding: Finding,
+  log: string[],
+): Promise<boolean> {
+  const keeper = finding.suggestedKeep ?? finding.paths[0]!;
+  const others = finding.paths.filter((relPath) => relPath !== keeper);
+  const KEEP_DELETE = `Keep ${path.basename(keeper)}, delete the other ${others.length}`;
+  const KEEP_ARCHIVE = `Keep ${path.basename(keeper)}, archive the other ${others.length}`;
+  const CHOOSE = "Choose which one to keep";
+  const MERGE = "Merge all into one note";
+
+  const choice = await ctx.ui.select(finding.summary, [SKIP, KEEP_DELETE, KEEP_ARCHIVE, CHOOSE, MERGE, STOP]);
+  if (choice === undefined || choice === STOP) return false;
+  if (choice === SKIP) return true;
+
+  if (choice === CHOOSE) {
+    const picked = await ctx.ui.select("Keep which note?", [...finding.paths, SKIP]);
+    if (picked === undefined || picked === SKIP) return picked !== undefined;
+    const rest = finding.paths.filter((relPath) => relPath !== picked);
+    const how = await ctx.ui.select(`Keep ${path.basename(picked)} — what about the other ${rest.length}?`, [
+      "Archive them",
+      "Delete them",
+      SKIP,
+    ]);
+    if (how === undefined || how === SKIP) return how !== undefined;
+    for (const relPath of rest) {
+      if (how === "Archive them") log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+      else {
+        fs.unlinkSync(path.join(memoryDir, relPath));
+        log.push(`deleted ${relPath}`);
+      }
+    }
+    return true;
+  }
+
+  if (choice === MERGE) {
+    const suggested = path.join(path.dirname(keeper), `${path.basename(path.dirname(keeper))}-merged.md`);
+    const target = await ctx.ui.input("Merged note path", suggested);
+    if (target === undefined) return true;
+    const targetRel = target.trim() || suggested;
+    const guard = assertWritable(memoryDir, path.join(memoryDir, targetRel));
+    if (guard) {
+      ctx.ui.notify(guard, "error");
+      return true;
+    }
+    mergeNotes(memoryDir, finding.paths, targetRel);
+    log.push(`merged ${finding.paths.length} notes into ${targetRel}`);
+    return true;
+  }
+
+  for (const relPath of others) {
+    if (choice === KEEP_ARCHIVE) log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+    else {
+      fs.unlinkSync(path.join(memoryDir, relPath));
+      log.push(`deleted ${relPath}`);
+    }
+  }
+  return true;
+}
+
+async function handleSingle(
+  ctx: ExtensionContext,
+  memoryDir: string,
+  finding: Finding,
+  log: string[],
+): Promise<boolean> {
+  const relPath = finding.paths[0]!;
+  const DELETE = "Delete";
+  const ARCHIVE = "Archive";
+  const choice = await ctx.ui.select(`${finding.summary}\n${finding.detail}`, [SKIP, ARCHIVE, DELETE, STOP]);
+  if (choice === undefined || choice === STOP) return false;
+  if (choice === SKIP) return true;
+
+  if (choice === ARCHIVE) log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
+  else {
+    fs.unlinkSync(path.join(memoryDir, relPath));
+    log.push(`deleted ${relPath}`);
+  }
+  return true;
+}
+
+/**
+ * Walk findings and ask what to do with each.
+ *
+ * Without a UI this degrades to the plain report: a review that cannot ask is
+ * still useful to read, and silently guessing at deletions would not be.
+ */
+export async function runInteractiveReview(
+  settings: MemoryMdSettings,
+  ctx: ExtensionContext,
+  options: { limit?: number } = {},
+): Promise<string> {
+  const memoryDir = getMemoryDir(settings, ctx.cwd);
+  const result = reviewMemories(memoryDir, options.limit === undefined ? {} : { limit: options.limit });
+  const report = formatReviewReport(result);
+
+  if (result.findings.length === 0) return report;
+  if (!ctx.hasUI) return `${report}\n\n_No interactive UI available, so nothing was changed._`;
+
+  const log: string[] = [];
+  let stopped = false;
+  for (const finding of result.findings) {
+    const proceed =
+      finding.kind === "duplicates"
+        ? await handleCluster(ctx, memoryDir, finding, log)
+        : finding.kind === "fragmentation"
+          ? ((await ctx.ui.select(`${finding.summary}\n${finding.detail}`, [SKIP, STOP])) ?? STOP) !== STOP
+          : await handleSingle(ctx, memoryDir, finding, log);
+    if (!proceed) {
+      stopped = true;
+      break;
+    }
+  }
+
+  if (log.length > 0) generateProjectsIndex(memoryDir);
+
+  const outcome =
+    log.length === 0
+      ? "No changes were made."
+      : `Applied ${log.length} change(s):\n${log.map((entry) => `- ${entry}`).join("\n")}`;
+  const tail = stopped ? "\n\n_Review stopped early._" : "";
+  const sync = log.length > 0 ? "\n\nRun `memory_sync push` to persist these changes." : "";
+  return `${report}\n\n## Result\n\n${outcome}${tail}${sync}`;
+}
+
+export function registerMemoryReview(pi: ExtensionAPI, settings: MemoryMdSettings): void {
+  pi.registerTool({
+    name: "memory_review",
+    label: "Memory Review",
+    description:
+      "Review memory for cleanup candidates (duplicates, expired, stale, fragmented) and interactively keep, archive, merge, or delete them. Never touches reference/.",
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({ description: "Maximum findings to review (default 20)" })),
+      reportOnly: Type.Optional(
+        Type.Boolean({ description: "Only produce the report without asking the user anything" }),
+      ),
+    }),
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { limit, reportOnly = false } = params as { limit?: number; reportOnly?: boolean };
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
+
+      if (!fs.existsSync(memoryDir)) {
+        return {
+          content: [{ type: "text", text: `Memory directory not found: ${memoryDir}` }],
+          details: { error: true },
+        };
+      }
+
+      if (reportOnly) {
+        const result = reviewMemories(memoryDir, limit === undefined ? {} : { limit });
+        return {
+          content: [{ type: "text", text: formatReviewReport(result) }],
+          details: { findings: result.totalFindings, interactive: false },
+        };
+      }
+
+      const text = await runInteractiveReview(settings, ctx, limit === undefined ? {} : { limit });
+      return { content: [{ type: "text", text }], details: { interactive: ctx.hasUI } };
+    },
+
+    renderCall: (args, theme) => new Text(buildToolCallText("memory_review", args, theme), 0, 0),
+    renderResult: (result, options, theme) =>
+      renderCollapsed("Memory review", getResultText(result), options, theme),
+  });
+}
+
 export function registerMemoryContext(pi: ExtensionAPI, settings: MemoryMdSettings): void {
   pi.registerTool({
     name: "memory_context",
@@ -428,6 +649,14 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
         };
       }
 
+      const readOnly = assertWritable(memoryDir, fullPath);
+      if (readOnly) {
+        return {
+          content: [{ type: "text", text: readOnly }],
+          details: { error: true, readOnly: true },
+        };
+      }
+
       const existing = readMemoryFile(fullPath);
 
       const frontmatter: MemoryFrontmatter = {
@@ -483,6 +712,14 @@ export function registerMemoryDelete(pi: ExtensionAPI, settings: MemoryMdSetting
         return {
           content: [{ type: "text", text: `Invalid memory path: ${relPath}` }],
           details: { error: true },
+        };
+      }
+
+      const readOnly = assertWritable(memoryDir, fullPath);
+      if (readOnly) {
+        return {
+          content: [{ type: "text", text: readOnly }],
+          details: { error: true, readOnly: true },
         };
       }
 
@@ -908,6 +1145,7 @@ export function registerAllMemoryTools(
   registerMemoryDelete(pi, settings);
   registerMemoryList(pi, settings);
   registerMemorySearch(pi, settings);
+  registerMemoryReview(pi, settings);
   registerMemoryIndex(pi, settings);
   registerMemoryInit(pi, settings, isRepoInitialized);
   registerMemoryCheck(pi, settings);

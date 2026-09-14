@@ -157,6 +157,36 @@ export async function syncRepository(
 }
 
 /**
+ * Read-only areas
+ *
+ * `reference/` mirrors an externally managed vault (Obsidian). The agent may
+ * search and read it, but must never write, edit, or delete inside it, and
+ * cleanup tooling must never propose changes there. Generated indexes therefore
+ * live outside these areas rather than carving out an exception.
+ */
+
+export const READONLY_AREAS: ReadonlySet<string> = new Set(["reference"]);
+
+/** The top-level area a memory path belongs to, or "" for the root itself. */
+export function memoryArea(memoryDir: string, fullPath: string): string {
+  const rel = path.relative(path.resolve(memoryDir), path.resolve(fullPath));
+  if (!rel || rel.startsWith("..")) return "";
+  return rel.split(path.sep)[0] ?? "";
+}
+
+export function isReadOnlyMemoryPath(memoryDir: string, fullPath: string): boolean {
+  return READONLY_AREAS.has(memoryArea(memoryDir, fullPath));
+}
+
+/** Returns an error message when the path may not be modified, else null. */
+export function assertWritable(memoryDir: string, fullPath: string): string | null {
+  const area = memoryArea(memoryDir, fullPath);
+  if (!READONLY_AREAS.has(area)) return null;
+  const rel = path.relative(path.resolve(memoryDir), path.resolve(fullPath));
+  return `${area}/ is read-only and externally managed; refusing to modify ${rel}. Read and search it instead.`;
+}
+
+/**
  * File operations
  */
 

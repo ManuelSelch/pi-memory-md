@@ -12,7 +12,7 @@ import {
   type MemoryMdSettings,
   syncRepository,
 } from "./memoryMdCore.js";
-import { registerAllMemoryTools } from "./tools.js";
+import { registerAllMemoryTools, runInteractiveReview } from "./tools.js";
 
 /**
  * Main extension initialization.
@@ -163,6 +163,16 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
           "info",
         );
       }
+    },
+  });
+
+  pi.registerCommand("memory-review", {
+    description: "Review memory for cleanup candidates and decide what to keep, archive, merge, or delete",
+    handler: async (args, ctx) => {
+      const parsed = Number.parseInt(args.trim(), 10);
+      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+      const text = await runInteractiveReview(settings, ctx, limit === undefined ? {} : { limit });
+      pi.sendMessage({ customType: "pi-memory-md-review", content: text, display: true });
     },
   });
 
