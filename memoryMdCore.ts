@@ -209,6 +209,14 @@ function validateFrontmatter(data: ParsedFrontmatter): { valid: boolean; error?:
     return { valid: false, error: "'tags' must be an array of strings" };
   }
 
+  if (frontmatter.scope !== undefined && !["system", "project", "long-term", "reference", "archive"].includes(frontmatter.scope)) {
+    return { valid: false, error: "'scope' must be a known memory scope" };
+  }
+
+  if (frontmatter.load !== undefined && !["always", "project", "index", "search-only"].includes(frontmatter.load)) {
+    return { valid: false, error: "'load' must be a known load policy" };
+  }
+
   return { valid: true };
 }
 
@@ -269,9 +277,14 @@ export function writeMemoryFile(filePath: string, content: string, frontmatter: 
 
 function ensureDirectoryStructure(memoryDir: string): void {
   const dirs = [
+    path.join(memoryDir, "system"),
+    path.join(memoryDir, "projects"),
+    path.join(memoryDir, "long-term", "user"),
+    path.join(memoryDir, "long-term", "tech"),
+    path.join(memoryDir, "reference"),
+    // Legacy layout kept for backward compatibility during migration.
     path.join(memoryDir, "core", "user"),
     path.join(memoryDir, "core", "project"),
-    path.join(memoryDir, "reference"),
   ];
 
   for (const dir of dirs) {
@@ -280,23 +293,42 @@ function ensureDirectoryStructure(memoryDir: string): void {
 }
 
 function createDefaultFiles(memoryDir: string): void {
-  const identityFile = path.join(memoryDir, "core", "user", "identity.md");
+  const systemPolicyFile = path.join(memoryDir, "system", "memory-policy.md");
+  if (!fs.existsSync(systemPolicyFile)) {
+    writeMemoryFile(
+      systemPolicyFile,
+      "# Memory Policy\n\nSystem memory is always loaded into the agent context. Keep it small and limited to durable behavior rules, stable user preferences, and memory hygiene instructions. Put project state in projects/<project>/current-state.md and durable searchable knowledge in long-term/.",
+      {
+        description: "Always-loaded memory policy and tier usage rules",
+        tags: ["memory", "policy", "system"],
+        scope: "system",
+        load: "always",
+        created: getCurrentDate(),
+      },
+    );
+  }
+
+  const identityFile = path.join(memoryDir, "long-term", "user", "identity.md");
   if (!fs.existsSync(identityFile)) {
     writeMemoryFile(identityFile, "# User Identity\n\nCustomize this file with your information.", {
       description: "User identity and background",
       tags: ["user", "identity"],
+      scope: "long-term",
+      load: "index",
       created: getCurrentDate(),
     });
   }
 
-  const preferFile = path.join(memoryDir, "core", "user", "prefer.md");
+  const preferFile = path.join(memoryDir, "system", "preferences.md");
   if (!fs.existsSync(preferFile)) {
     writeMemoryFile(
       preferFile,
       "# User Preferences\n\n## Communication Style\n- Be concise\n- Show code examples\n\n## Code Style\n- 2 space indentation\n- Prefer const over var\n- Functional programming preferred",
       {
-        description: "User habits and code style preferences",
-        tags: ["user", "preferences"],
+        description: "Always-loaded user habits and code style preferences",
+        tags: ["user", "preferences", "system"],
+        scope: "system",
+        load: "always",
         created: getCurrentDate(),
       },
     );
@@ -314,13 +346,13 @@ function singleLine(text: string, maxChars = 160): string {
   return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
 }
 
-/** Count .md files per top-level directory outside of core/. */
+/** Count .md files per top-level directory outside of always-loaded system/. */
 function summarizeExternalAreas(memoryDir: string): string[] {
   if (!fs.existsSync(memoryDir)) return [];
 
   return fs
     .readdirSync(memoryDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== "core" && !entry.name.startsWith("."))
+    .filter((entry) => entry.isDirectory() && entry.name !== "system" && !entry.name.startsWith("."))
     .map((entry) => {
       const count = listMemoryFiles(path.join(memoryDir, entry.name)).length;
       return `- ${entry.name}/ (${count} files)`;
@@ -328,12 +360,28 @@ function summarizeExternalAreas(memoryDir: string): string[] {
     .filter((line) => !line.endsWith("(0 files)"));
 }
 
+function appendFileBody(lines: string[], memoryDir: string, filePath: string, titlePrefix = ""): void {
+  const memory = readMemoryFile(filePath);
+  if (!memory) return;
+  const relPath = path.relative(memoryDir, filePath);
+  lines.push(`## ${titlePrefix}${relPath}`, "", memory.content.trim(), "");
+}
+
+function appendIndexEntry(entries: string[], memoryDir: string, filePath: string): void {
+  const memory = readMemoryFile(filePath);
+  if (!memory) return;
+  const relPath = path.relative(memoryDir, filePath);
+  const { description, tags } = memory.frontmatter;
+  const tagStr = tags?.length ? ` [${tags.join(", ")}]` : "";
+  entries.push(`- ${relPath} — ${singleLine(description || "No description")}${tagStr}`);
+}
+
 /**
- * Build the always-injected core context.
+ * Build tiered memory context.
  *
- * This is an *index* only: path, description and tags per core file. Bodies stay
- * on disk and are pulled in on demand with memory_read, so core can grow without
- * the per-session cost growing with it.
+ * system/ files are injected in full and should stay small. Legacy core/ files
+ * and other durable areas are exposed as an index so the agent can read details
+ * on demand via memory_read.
  */
 export function buildMemoryContext(settings: MemoryMdSettings, cwd: string): string {
   return buildMemoryContextParts(settings, cwd).context;
@@ -350,10 +398,11 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   estimatedTokens: number;
 } {
   const memoryDir = getMemoryDir(settings, cwd);
-  const coreDir = path.join(memoryDir, "core");
+  const systemDir = path.join(memoryDir, "system");
+  const legacyCoreDir = path.join(memoryDir, "core");
   const budgetTokens = settings.systemPrompt?.maxTokens ?? DEFAULT_MAX_TOKENS;
 
-  if (!fs.existsSync(coreDir)) {
+  if (!fs.existsSync(memoryDir)) {
     return {
       context: "",
       memoryDir,
@@ -366,8 +415,14 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
     };
   }
 
-  const files = listMemoryFiles(coreDir);
-  if (files.length === 0) {
+  const systemFiles = fs.existsSync(systemDir) ? listMemoryFiles(systemDir) : [];
+  const legacyCoreFiles = fs.existsSync(legacyCoreDir) ? listMemoryFiles(legacyCoreDir) : [];
+  const indexRoots = ["long-term", "projects", "core"]
+    .map((name) => path.join(memoryDir, name))
+    .filter((dir) => fs.existsSync(dir));
+  const indexFiles = [...new Set(indexRoots.flatMap((dir) => listMemoryFiles(dir)))];
+
+  if (systemFiles.length === 0 && indexFiles.length === 0) {
     return {
       context: "",
       memoryDir,
@@ -381,52 +436,65 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   }
 
   const budget = budgetTokens * CHARS_PER_TOKEN;
-  const header: string[] = [
+  const lines: string[] = [
     "# Project Memory",
     "",
-    "Core memory index. Read a file with memory_read before relying on its details.",
+    "System memory is loaded in full. Indexed memory is listed by path/description/tags; read details with memory_read.",
     "",
   ];
 
-  const entries: string[] = [];
-  let used = header.join("\n").length;
+  let used = lines.join("\n").length;
   let omitted = 0;
 
-  for (const filePath of files) {
-    const memory = readMemoryFile(filePath);
-    if (!memory) continue;
+  if (systemFiles.length > 0) {
+    lines.push("## System memory", "");
+    used = lines.join("\n").length;
+    for (const filePath of systemFiles) {
+      const before = lines.length;
+      appendFileBody(lines, memoryDir, filePath);
+      const nextUsed = lines.join("\n").length;
+      if (nextUsed > budget) {
+        lines.splice(before);
+        omitted++;
+      } else {
+        used = nextUsed;
+      }
+    }
+  }
 
-    const relPath = path.relative(memoryDir, filePath);
-    const { description, tags } = memory.frontmatter;
-    const tagStr = tags?.length ? ` [${tags.join(", ")}]` : "";
-    const entry = `- ${relPath} — ${singleLine(description || "No description")}${tagStr}`;
-
+  const entries: string[] = [];
+  for (const filePath of indexFiles) {
+    const before = entries.length;
+    appendIndexEntry(entries, memoryDir, filePath);
+    const entry = entries[before];
+    if (!entry) continue;
     if (used + entry.length + 1 > budget) {
+      entries.pop();
       omitted++;
       continue;
     }
-
-    entries.push(entry);
     used += entry.length + 1;
   }
 
-  const lines = [...header, ...entries];
+  if (entries.length > 0) {
+    lines.push("", "## Indexed memory", "", ...entries);
+  }
 
   if (omitted > 0) {
-    lines.push(`- … ${omitted} further core file(s) omitted for space; use memory_list to see them.`);
+    lines.push(`- … ${omitted} memory file(s) omitted for space; use memory_list to see them.`);
   }
 
   const external = summarizeExternalAreas(memoryDir);
   if (external.length > 0) {
-    lines.push("", "External memory (not loaded; find it with memory_search, then memory_read):", "", ...external);
+    lines.push("", "External/search-only memory:", "", ...external);
   }
 
   const context = lines.join("\n");
   return {
     context,
     memoryDir,
-    coreFileCount: files.length,
-    injectedCoreEntries: entries.length,
+    coreFileCount: legacyCoreFiles.length + systemFiles.length,
+    injectedCoreEntries: entries.length + systemFiles.length,
     omittedCoreEntries: omitted,
     externalAreas: external,
     budgetTokens,
@@ -463,12 +531,12 @@ export function buildMemoryContextPreview(
     `Path: \`${parts.memoryDir}\``,
     `Estimated size: **${parts.estimatedTokens} tokens** / budget **${parts.budgetTokens} tokens**`,
     "",
-    "## Injected core index",
+    "## Injected memory",
     "",
-    `- Core markdown files: **${parts.coreFileCount}**`,
-    `- Injected index entries: **${parts.injectedCoreEntries}**`,
+    `- System + legacy core markdown files: **${parts.coreFileCount}**`,
+    `- Injected full bodies/index entries: **${parts.injectedCoreEntries}**`,
     `- Omitted by budget: **${parts.omittedCoreEntries}**`,
-    "- Full file bodies are **not** injected; use `memory_read` for details.",
+    "- `system/` file bodies are injected in full; indexed memory needs `memory_read` for details.",
     "",
     "## External memory shown in context",
     "",

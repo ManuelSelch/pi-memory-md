@@ -1038,7 +1038,7 @@ export function registerMemoryInit(
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { force = false } = params as { force?: boolean };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "core", "user"));
+      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core", "user"));
 
       if (alreadyInitialized && !force) {
         return {
@@ -1062,7 +1062,7 @@ export function registerMemoryInit(
         content: [
           {
             type: "text",
-            text: `Memory repository initialized:\n${result.message}\n\nCreated directory structure:\n${["core/user", "core/project", "reference"].map((d) => `  - ${d}`).join("\n")}`,
+            text: `Memory repository initialized:\n${result.message}\n\nCreated directory structure:\n${["system", "projects", "long-term/user", "long-term/tech", "reference", "core/user (legacy)", "core/project (legacy)"].map((d) => `  - ${d}`).join("\n")}`,
           },
         ],
         details: { success: true },

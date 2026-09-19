@@ -25,9 +25,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   let cachedMemoryContext: string | null = null;
   let memoryInjected = false;
 
-  /** Count core index entries only; the context also lists external areas. */
-  function countCoreEntries(context: string): number {
-    return context.split("\n").filter((line) => line.startsWith("- core/")).length;
+  /** Count injected memory items for notifications. */
+  function countMemoryItems(context: string): number {
+    return context.split("\n").filter((line) => line.startsWith("## system/") || line.startsWith("- ")).length;
   }
 
   function withMemoryTitle(context: string): string {
@@ -53,9 +53,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     if (!settings.enabled) return false;
 
     const memoryDir = getMemoryDir(settings, ctx.cwd);
-    const coreDir = path.join(memoryDir, "core");
+    const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core"));
 
-    if (!fs.existsSync(coreDir)) {
+    if (!hasTieredMemory) {
       if (options.showNotification) {
         ctx.ui.notify("Memory-md not initialized. Use /memory-init to set up project memory.", "info");
       }
@@ -97,7 +97,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
 
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
-      const fileCount = countCoreEntries(cachedMemoryContext);
+      const fileCount = countMemoryItems(cachedMemoryContext);
       ctx.ui.notify(`Memory injected: ${fileCount} files (${mode})`, "info");
 
       if (mode === "message-append") {
@@ -122,9 +122,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const projectName = path.basename(ctx.cwd);
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const coreUserDir = path.join(memoryDir, "core", "user");
+      const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core", "user"));
 
-      if (!fs.existsSync(coreUserDir)) {
+      if (!hasTieredMemory) {
         ctx.ui.notify(`Memory: ${projectName} | Not initialized | Use /memory-init to set up`, "info");
         return;
       }
@@ -143,7 +143,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     description: "Initialize memory repository",
     handler: async (_args, ctx) => {
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "core", "user"));
+      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core", "user"));
 
       const result = await syncRepository(pi, settings, repoInitialized);
 
@@ -159,7 +159,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(`Memory already exists: ${result.message}`, "info");
       } else {
         ctx.ui.notify(
-          `Memory initialized: ${result.message}\n\nCreated:\n  - core/user\n  - core/project\n  - reference`,
+          `Memory initialized: ${result.message}\n\nCreated:\n  - system\n  - projects\n  - long-term/user\n  - long-term/tech\n  - reference\n  - core/user (legacy)`,
           "info",
         );
       }
@@ -202,7 +202,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       memoryInjected = false;
 
       const mode = settings.injection || "message-append";
-      const fileCount = countCoreEntries(memoryContext);
+      const fileCount = countMemoryItems(memoryContext);
 
       if (mode === "message-append") {
         pi.sendMessage({
