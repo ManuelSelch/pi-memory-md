@@ -31,7 +31,7 @@ pi install git:github.com/VandeeFeng/pi-memory-md
 }
 
 # 4. Start a new pi session
-# type /memory-init slash command to initialize the memory files
+# type /memory init to initialize the memory files
 ```
 
 ## How It Works
@@ -43,23 +43,25 @@ Session Start
     ↓
 2. Scan all .md files in memory directory
     ↓
-3. Build index (descriptions + tags only - NOT full content)
+3. Load system bodies and build project/long-term indexes
     ↓
-4. Append index to conversation via prompt append (or system prompt)
+4. Add memory as a hidden message for a new session only
     ↓
 5. LLM reads full file content via tools when needed
 ```
 
 ## Slash Commands In Pi
 
-You can also use these slash commands directly in pi:
+Use `/memory` with a subcommand. Tab completion suggests subcommands and `context summary|exact`. Running `/memory` without arguments shows usage.
 
 | Command | Description |
 |---------|-------------|
-| `/memory-init` | Initialize memory repository (clone repo, create directory structure, generate default files) |
-| `/memory-status` | Show memory repository status (project name, git status, path) |
-| `/memory-refresh` | Refresh memory context from files (rebuild cache and inject into current session) |
-| `/memory-check` | Check memory folder structure (display directory tree) |
+| `/memory init` | Initialize memory repository (clone repo, create directory structure, generate default files) |
+| `/memory status` | Show memory repository status (project name, git status, path) |
+| `/memory refresh` | Refresh memory context from files (rebuild cache and inject into current session) |
+| `/memory check` | Show memory folder summary |
+| `/memory context [summary\|exact]` | Preview memory context |
+| `/memory review [limit]` | Review cleanup candidates interactively |
 
 ## Available Tools
 
@@ -127,7 +129,7 @@ Markdown content...
 
 ### Memory Injection
 
-Memory is added as a hidden custom agent message before the first agent turn of each session. It is stored in the session context and is not displayed in the TUI (`display: false`). The message contains full `system/` file bodies plus indexes for project and long-term memory. Use `/memory-refresh` after changing memory files during a session.
+Memory is added as a hidden custom agent message before the first agent turn of a new session. Reopening an existing conversation does not add memory again. It is stored in the session context and is not displayed in the TUI (`display: false`). The message contains full `system/` file bodies plus indexes for project and long-term memory. Use `/memory refresh` after changing memory files during a session.
 ## Usage Examples
 
 Simply talk to pi - the LLM will automatically use memory tools when appropriate:

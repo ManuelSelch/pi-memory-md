@@ -128,7 +128,7 @@ After initialization, extract relevant preferences from your `AGENTS.md` file to
 Check status with command:
 
 ```
-/memory-status
+/memory status
 ```
 
 Should show: `Memory: project-name | Repo: Clean | Path: {localPath}/project-name`
@@ -259,7 +259,7 @@ After setup, verify:
 - [ ] GitHub repository exists and is accessible
 - [ ] Repository cloned to configured `localPath`
 - [ ] Directory structure created
-- [ ] `/memory-status` shows correct info
+- [ ] `/memory status` shows correct info
 - [ ] `memory_list()` returns files
 - [ ] `prefer.md` populated (either from AGENTS.md or default template)
 

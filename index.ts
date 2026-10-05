@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 import {
   buildMemoryContext,
   buildMemoryContextPreview,
@@ -68,7 +68,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
 
     if (!hasTieredMemory) {
       if (options.showNotification) {
-        ctx.ui.notify("Memory-md not initialized. Use /memory-init to set up project memory.", "info");
+        ctx.ui.notify("Memory-md not initialized. Use /memory init to set up project memory.", "info");
       }
       return false;
     }
@@ -122,7 +122,12 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
 
   registerAllMemoryTools(pi, settings, repoInitialized);
 
-  pi.registerCommand("memory-status", {
+  const commands: Record<string, {
+    description: string;
+    handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
+  }> = {};
+
+  commands.status = {
     description: "Show memory repository status",
     handler: async (_args, ctx) => {
       const projectName = path.basename(ctx.cwd);
@@ -130,7 +135,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "projects")) || fs.existsSync(path.join(memoryDir, "long-term"));
 
       if (!hasTieredMemory) {
-        ctx.ui.notify(`Memory: ${projectName} | Not initialized | Use /memory-init to set up`, "info");
+        ctx.ui.notify(`Memory: ${projectName} | Not initialized | Use /memory init to set up`, "info");
         return;
       }
 
@@ -142,9 +147,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         isDirty ? "warning" : "info",
       );
     },
-  });
+  };
 
-  pi.registerCommand("memory-init", {
+  commands.init = {
     description: "Initialize memory repository",
     handler: async (_args, ctx) => {
       const memoryDir = getMemoryDir(settings, ctx.cwd);
@@ -169,9 +174,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         );
       }
     },
-  });
+  };
 
-  pi.registerCommand("memory-review", {
+  commands.review = {
     description: "Review memory for cleanup candidates and decide what to keep, archive, merge, or delete",
     handler: async (args, ctx) => {
       const parsed = Number.parseInt(args.trim(), 10);
@@ -179,9 +184,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       const text = await runInteractiveReview(settings, ctx, limit === undefined ? {} : { limit });
       pi.sendMessage({ customType: "pi-memory-md-review", content: text, display: true });
     },
-  });
+  };
 
-  pi.registerCommand("memory-context", {
+  commands.context = {
     description: "Preview the memory context injected for the agent",
     handler: async (args, ctx) => {
       const mode = args.trim().toLocaleLowerCase() === "exact" ? "exact" : "summary";
@@ -191,9 +196,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         display: true,
       });
     },
-  });
+  };
 
-  pi.registerCommand("memory-refresh", {
+  commands.refresh = {
     description: "Refresh memory context from files",
     handler: async (_args, ctx) => {
       const memoryContext = buildMemoryContext(settings, ctx.cwd);
@@ -214,9 +219,9 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       });
       ctx.ui.notify(`Memory refreshed: ${fileCount} files injected`, "info");
     },
-  });
+  };
 
-  pi.registerCommand("memory-check", {
+  commands.check = {
     description: "Show compact memory folder summary",
     handler: async (_args, ctx) => {
       const memoryDir = getMemoryDir(settings, ctx.cwd);
@@ -246,10 +251,34 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
           "",
           ...topLevelDirs,
           "",
-          "Use `/memory-context` to see what is injected into the agent context.",
+          "Use `/memory context` to see what is injected into the agent context.",
         ].join("\n"),
         display: true,
       });
+    },
+  };
+
+  pi.registerCommand("memory", {
+    description: "Manage memory: init, status, review, context, refresh, check",
+    getArgumentCompletions: (prefix) => {
+      const candidates = /^context\s/.test(prefix)
+        ? ["context summary", "context exact"]
+        : Object.keys(commands);
+      const matches = candidates.filter((value) => value.startsWith(prefix));
+      return matches.length ? matches.map((value) => ({ value, label: value })) : null;
+    },
+    handler: async (args, ctx) => {
+      const [subcommand, ...rest] = args.trim().split(/\s+/);
+      if (!Object.hasOwn(commands, subcommand)) {
+        ctx.ui.notify(
+          ["Usage: /memory <subcommand>", ...Object.entries(commands).map(
+            ([name, command]) => `  ${name}${name === "context" ? " [summary|exact]" : name === "review" ? " [limit]" : ""} — ${command.description}`,
+          )].join("\n"),
+          subcommand ? "warning" : "info",
+        );
+        return;
+      }
+      await commands[subcommand].handler(rest.join(" "), ctx);
     },
   });
 }

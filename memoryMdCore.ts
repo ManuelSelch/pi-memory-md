@@ -497,6 +497,6 @@ export function buildMemoryContextPreview(
     "",
     "## Exact context",
     "",
-    "Use `memory_context({ mode: \"exact\" })` or `/memory-context exact` to view the exact injected text.",
+    "Use `memory_context({ mode: \"exact\" })` or `/memory context exact` to view the exact injected text.",
   ].join("\n");
 }

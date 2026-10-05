@@ -17,7 +17,46 @@ vi.mock("./tools.js", () => ({ registerAllMemoryTools: vi.fn() }));
 import memoryMdExtension from "./index.js";
 import { buildMemoryContext, syncRepository } from "./memoryMdCore.js";
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(buildMemoryContext).mockReturnValue("");
+});
+
+function memoryCommand() {
+  const registerCommand = vi.fn();
+  memoryMdExtension({ on: vi.fn(), registerCommand, sendMessage: vi.fn() } as any);
+  expect(registerCommand).toHaveBeenCalledTimes(1);
+  expect(registerCommand.mock.calls[0][0]).toBe("memory");
+  return registerCommand.mock.calls[0][1];
+}
+
+it("completes memory subcommands and context modes", () => {
+  const command = memoryCommand();
+  expect(command.getArgumentCompletions("").map((item: any) => item.value).sort())
+    .toEqual(["check", "context", "init", "refresh", "review", "status"]);
+  expect(command.getArgumentCompletions("re").map((item: any) => item.value))
+    .toEqual(["review", "refresh"]);
+  expect(command.getArgumentCompletions("context e")).toEqual([{ value: "context exact", label: "context exact" }]);
+  expect(command.getArgumentCompletions("context ").map((item: any) => item.value))
+    .toEqual(["context summary", "context exact"]);
+  expect(command.getArgumentCompletions("invalid")).toBeNull();
+});
+
+it.each(["", "invalid", "toString"])("shows usage for %j without dispatching", async (args) => {
+  const command = memoryCommand();
+  const notify = vi.fn();
+  await command.handler(args, { ui: { notify } });
+  expect(notify).toHaveBeenCalledWith(expect.stringContaining("Usage: /memory <subcommand>"), args ? "warning" : "info");
+});
+
+it("dispatches refresh through the unified command", async () => {
+  vi.mocked(buildMemoryContext).mockReturnValue("# Project Memory\n\nPreferences");
+  const sendMessage = vi.fn();
+  const registerCommand = vi.fn();
+  memoryMdExtension({ on: vi.fn(), registerCommand, sendMessage } as any);
+  await registerCommand.mock.calls[0][1].handler("refresh", { cwd: "/project", ui: { notify: vi.fn() } });
+  expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-memory-md-refresh", display: false }));
+});
 
 async function startupNotifications(result: Awaited<ReturnType<typeof syncRepository>>) {
   vi.mocked(syncRepository).mockResolvedValue(result);
