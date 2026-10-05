@@ -87,29 +87,23 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on("before_agent_start", async (event, ctx) => {
+  pi.on("before_agent_start", async (_event, ctx) => {
     if (syncPromise) {
       await syncPromise;
       syncPromise = null;
     }
 
-    const mode = settings.injection || "message-append";
-
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
       const fileCount = countMemoryItems(cachedMemoryContext);
-      ctx.ui.notify(`Memory injected: ${fileCount} files (${mode})`, "info");
-
-      if (mode === "message-append") {
-        return {
-          message: {
-            customType: "pi-memory-md",
-            content: withMemoryTitle(cachedMemoryContext),
-            display: false,
-          },
-        };
-      }
-      return { systemPrompt: `${event.systemPrompt}\n\n${withMemoryTitle(cachedMemoryContext)}` };
+      ctx.ui.notify(`Memory injected: ${fileCount} files`, "info");
+      return {
+        message: {
+          customType: "pi-memory-md",
+          content: withMemoryTitle(cachedMemoryContext),
+          display: false,
+        },
+      };
     }
 
     return undefined;
@@ -201,19 +195,13 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       cachedMemoryContext = memoryContext;
       memoryInjected = false;
 
-      const mode = settings.injection || "message-append";
       const fileCount = countMemoryItems(memoryContext);
-
-      if (mode === "message-append") {
-        pi.sendMessage({
-          customType: "pi-memory-md-refresh",
-          content: withMemoryTitle(memoryContext),
-          display: false,
-        });
-        ctx.ui.notify(`Memory refreshed: ${fileCount} files injected (${mode})`, "info");
-      } else {
-        ctx.ui.notify(`Memory cache refreshed: ${fileCount} files (will be injected on next prompt)`, "info");
-      }
+      pi.sendMessage({
+        customType: "pi-memory-md-refresh",
+        content: withMemoryTitle(memoryContext),
+        display: false,
+      });
+      ctx.ui.notify(`Memory refreshed: ${fileCount} files injected`, "info");
     },
   });
 

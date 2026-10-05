@@ -27,7 +27,6 @@ export interface MemoryMdSettings {
   autoSync?: {
     onSessionStart?: boolean;
   };
-  injection?: "system-prompt" | "message-append";
   systemPrompt?: {
     maxTokens?: number;
     includeProjects?: string[];

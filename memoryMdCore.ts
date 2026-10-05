@@ -54,7 +54,6 @@ export function loadSettings(): MemoryMdSettings {
     repoUrl: "",
     localPath: DEFAULT_LOCAL_PATH,
     autoSync: { onSessionStart: true },
-    injection: "message-append",
     systemPrompt: {
       maxTokens: 10000,
       includeProjects: ["current"],

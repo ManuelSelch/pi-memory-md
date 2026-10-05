@@ -111,7 +111,6 @@ Markdown content...
   "pi-memory-md": {
     "enabled": true,
     "repoUrl": "git@github.com:username/repo.git", // Or HTTPS format
-    "injection": "message-append",
     "autoSync": {
       "onSessionStart": true
     }
@@ -124,48 +123,11 @@ Markdown content...
 | `enabled` | `true` | Enable extension |
 | `repoUrl` | Required | GitHub repository URL |
 | `localPath` | `~/.pi/memory-md` | Local clone path |
-| `injection` | `"message-append"` | Memory injection mode: `"message-append"`, `"system-prompt"` |
 | `autoSync.onSessionStart` | `true` | Git pull on session start |
 
-### Memory Injection Modes
+### Memory Injection
 
-The extension supports two modes for injecting memory into the conversation:
-
-#### 1. Message Append (Default)
-
-```json
-{
-  "pi-memory-md": {
-    ...
-    "injection": "message-append"
-  }
-}
-```
-
-- Memory is sent as a custom message before the user's first message
-- Not visible in the TUI (`display: false` in pi-tui)
-- Persists in the session history
-- Injected only once per session (on first agent turn)
-- **Pros**: Lower token usage, memory persists naturally in conversation
-- **Cons**: Only visible when the model scrolls back to earlier messages
-
-#### 2. System Prompt
-
-```json
-{
-  "pi-memory-md": {
-    ...
-    "injection": "system-prompt"
-  }
-}
-```
-
-- Memory is appended to the system prompt
-- Rebuilt and injected on every agent turn
-- Always visible to the model in the system context
-- **Pros**: Memory always present in system context, no need to scroll back
-- **Cons**: Higher token usage (repeated on every prompt)
-
+Memory is added as a hidden custom agent message before the first agent turn of each session. It is stored in the session context and is not displayed in the TUI (`display: false`). The message contains full `system/` file bodies plus indexes for project and long-term memory. Use `/memory-refresh` after changing memory files during a session.
 ## Usage Examples
 
 Simply talk to pi - the LLM will automatically use memory tools when appropriate:
