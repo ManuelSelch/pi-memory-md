@@ -6,7 +6,6 @@ vi.mock("./memoryMdCore.js", () => ({
     enabled: true,
     localPath: "/memory",
     repoUrl: "https://github.com/example/memory-md.git",
-    autoSync: { onSessionStart: true },
   }),
   getMemoryDir: () => "/memory",
   buildMemoryContext: vi.fn(() => ""),
@@ -68,34 +67,17 @@ it("dispatches refresh through the unified command", async () => {
   expect(sendMessage).toHaveBeenCalledWith(expect.objectContaining({ customType: "pi-memory-md-refresh", display: false }));
 });
 
-async function startupNotifications(result: Awaited<ReturnType<typeof syncRepository>>) {
-  vi.mocked(syncRepository).mockResolvedValue(result);
+it("does not synchronize when opening a session", async () => {
   const handlers = new Map<string, Function>();
   const pi = {
     on: (name: string, handler: Function) => handlers.set(name, handler),
     registerCommand: vi.fn(),
   };
-  const notify = vi.fn();
-  const ctx = { cwd: "/project", ui: { notify }, sessionManager: { getBranch: () => [] } };
+  const ctx = { cwd: "/project", ui: { notify: vi.fn() }, sessionManager: { getBranch: () => [] } };
   memoryMdExtension(pi as any);
   await handlers.get("session_start")!({ reason: "startup" }, ctx);
   await handlers.get("before_agent_start")!({}, ctx);
-  return notify;
-}
-
-it("does not show a popup when auto-sync is already latest", async () => {
-  const notify = await startupNotifications({ success: true, updated: false, message: "[memory-md] is already latest" });
-  expect(notify).not.toHaveBeenCalled();
-});
-
-it("still notifies when auto-sync pulls changes", async () => {
-  const notify = await startupNotifications({ success: true, updated: true, message: "Pulled latest changes" });
-  expect(notify).toHaveBeenCalledWith("Pulled latest changes", "info");
-});
-
-it("still notifies when auto-sync fails", async () => {
-  const notify = await startupNotifications({ success: false, message: "Pull failed" });
-  expect(notify).toHaveBeenCalledWith("Pull failed", "error");
+  expect(syncRepository).not.toHaveBeenCalled();
 });
 
 it("injects memory into a new session", async () => {

@@ -53,7 +53,6 @@ export function loadSettings(): MemoryMdSettings {
     enabled: true,
     repoUrl: "",
     localPath: DEFAULT_LOCAL_PATH,
-    autoSync: { onSessionStart: true },
     systemPrompt: {
       maxTokens: 10000,
       includeProjects: ["current"],

@@ -116,9 +116,6 @@ Markdown content...
   "pi-memory-md": {
     "enabled": true,
     "repoUrl": "git@github.com:username/repo.git", // Or HTTPS format
-    "autoSync": {
-      "onSessionStart": true
-    }
   }
 }
 ```
@@ -128,9 +125,10 @@ Markdown content...
 | `enabled` | `true` | Enable extension |
 | `repoUrl` | Required | GitHub repository URL |
 | `localPath` | `~/.pi/memory-md` | Local clone path |
-| `autoSync.onSessionStart` | `true` | Git pull on session start |
 
 ### Memory Injection
+
+Memory is loaded locally at session start. Git synchronization is explicit through the `memory_sync` tool or `/memory init`; no Git pull runs automatically when a session opens.
 
 Memory is added as a hidden custom agent message before the first agent turn of a new session. Reopening an existing conversation does not add memory again. It is stored in the session context and is not displayed in the TUI (`display: false`). The message contains full `system/` file bodies plus indexes for project and long-term memory. Use `/memory refresh` after changing memory files during a session.
 ## Usage Examples

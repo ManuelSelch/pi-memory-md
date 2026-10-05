@@ -24,9 +24,6 @@ export interface MemoryMdSettings {
   enabled?: boolean;
   repoUrl?: string;
   localPath?: string;
-  autoSync?: {
-    onSessionStart?: boolean;
-  };
   systemPrompt?: {
     maxTokens?: number;
     includeProjects?: string[];

@@ -21,7 +21,6 @@ import { registerAllMemoryTools } from "./tools.js";
 export default function memoryMdExtension(pi: ExtensionAPI): void {
   const settings: MemoryMdSettings = loadSettings();
   const repoInitialized = { value: false };
-  let syncPromise: ReturnType<typeof syncRepository> | null = null;
   let cachedMemoryContext: string | null = null;
   let memoryInjected = false;
 
@@ -55,10 +54,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     return count;
   }
 
-  function initMemoryContext(
-    ctx: ExtensionContext,
-    options: { showNotification: boolean; autoSync: boolean },
-  ): boolean {
+  function initMemoryContext(ctx: ExtensionContext, options: { showNotification: boolean }): boolean {
     Object.assign(settings, loadSettings());
 
     if (!settings.enabled) return false;
@@ -73,15 +69,6 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       return false;
     }
 
-    if (options.autoSync && settings.autoSync?.onSessionStart && settings.localPath) {
-      syncPromise = syncRepository(pi, settings, repoInitialized).then((syncResult) => {
-        if (settings.repoUrl && (!syncResult.success || syncResult.updated)) {
-          ctx.ui.notify(syncResult.message, syncResult.success ? "info" : "error");
-        }
-        return syncResult;
-      });
-    }
-
     cachedMemoryContext = buildMemoryContext(settings, ctx.cwd);
     return true;
   }
@@ -90,20 +77,10 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     Object.assign(settings, loadSettings());
     memoryInjected = sessionAlreadyHasMemory(ctx) || sessionHasConversation(ctx);
 
-    if (event.reason === "new" || event.reason === "fork") {
-      syncPromise = null;
-      initMemoryContext(ctx, { showNotification: true, autoSync: false });
-    } else {
-      initMemoryContext(ctx, { showNotification: true, autoSync: true });
-    }
+    initMemoryContext(ctx, { showNotification: true });
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
-    if (syncPromise) {
-      await syncPromise;
-      syncPromise = null;
-    }
-
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
       const fileCount = countMemoryItems(cachedMemoryContext);
