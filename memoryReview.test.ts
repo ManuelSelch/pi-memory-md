@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertWritable, isReadOnlyMemoryPath, writeMemoryFile } from "./memoryMdCore.js";
 import { registerMemoryCleanup, registerMemoryDelete, registerMemoryReview, registerMemoryWrite } from "./tools.js";
 import {
@@ -300,6 +300,33 @@ describe("memory_cleanup", () => {
     expect(fs.readFileSync(path.join(memoryDir, "projects/a/merged.md"), "utf8")).toContain("First and second");
     expect(fs.existsSync(path.join(memoryDir, "archive/projects/a/one.md"))).toBe(true);
     expect(fs.existsSync(path.join(memoryDir, "archive/projects/a/two.md"))).toBe(true);
+  });
+
+  it("rolls back a merge when archiving a later source fails", async () => {
+    write("projects/a/one.md", { description: "One", body: "# One" });
+    write("projects/a/two.md", { description: "Two", body: "# Two" });
+    const originalRename = fs.renameSync;
+    let renameCalls = 0;
+    const renameSpy = vi.spyOn(fs, "renameSync").mockImplementation(((from: fs.PathLike, to: fs.PathLike) => {
+      renameCalls++;
+      if (renameCalls === 2) throw new Error("forced archive failure");
+      return originalRename(from, to);
+    }) as typeof fs.renameSync);
+
+    try {
+      const result = await execute(cleanupTool(), {
+        action: "merge", paths: ["projects/a/one.md", "projects/a/two.md"], targetPath: "projects/a/merged.md",
+        content: "# Merged", description: "Merged notes",
+      });
+      expect(result.details.success).toBe(false);
+      expect(result.details.message).toContain("without partial changes");
+      expect(fs.existsSync(path.join(memoryDir, "projects/a/one.md"))).toBe(true);
+      expect(fs.existsSync(path.join(memoryDir, "projects/a/two.md"))).toBe(true);
+      expect(fs.existsSync(path.join(memoryDir, "projects/a/merged.md"))).toBe(false);
+      expect(fs.existsSync(path.join(memoryDir, "archive/projects/a/one.md"))).toBe(false);
+    } finally {
+      renameSpy.mockRestore();
+    }
   });
 
   it("requires approval for an update that overwrites content", async () => {
