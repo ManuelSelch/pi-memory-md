@@ -64,7 +64,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
 
     if (options.autoSync && settings.autoSync?.onSessionStart && settings.localPath) {
       syncPromise = syncRepository(pi, settings, repoInitialized).then((syncResult) => {
-        if (settings.repoUrl) {
+        if (settings.repoUrl && (!syncResult.success || syncResult.updated)) {
           ctx.ui.notify(syncResult.message, syncResult.success ? "info" : "error");
         }
         return syncResult;
