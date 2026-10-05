@@ -34,6 +34,17 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     return context.trimStart().startsWith("# Project Memory") ? context : `# Project Memory\n\n${context}`;
   }
 
+  function sessionAlreadyHasMemory(ctx: ExtensionContext): boolean {
+    return ctx.sessionManager.getBranch().some((entry) =>
+      entry.type === "custom_message" &&
+      (entry.customType === "pi-memory-md" || entry.customType === "pi-memory-md-refresh"),
+    );
+  }
+
+  function sessionHasConversation(ctx: ExtensionContext): boolean {
+    return ctx.sessionManager.getBranch().some((entry) => entry.type === "message");
+  }
+
   function countMarkdownFiles(dir: string): number {
     let count = 0;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -72,12 +83,12 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     }
 
     cachedMemoryContext = buildMemoryContext(settings, ctx.cwd);
-    memoryInjected = false;
     return true;
   }
 
   pi.on("session_start", async (event, ctx) => {
     Object.assign(settings, loadSettings());
+    memoryInjected = sessionAlreadyHasMemory(ctx) || sessionHasConversation(ctx);
 
     if (event.reason === "new" || event.reason === "fork") {
       syncPromise = null;
@@ -193,7 +204,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       }
 
       cachedMemoryContext = memoryContext;
-      memoryInjected = false;
+      memoryInjected = true;
 
       const fileCount = countMemoryItems(memoryContext);
       pi.sendMessage({
