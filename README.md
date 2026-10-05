@@ -61,7 +61,7 @@ Use `/memory` with a subcommand. Tab completion suggests subcommands and `contex
 | `/memory refresh` | Refresh memory context from files (rebuild cache and inject into current session) |
 | `/memory check` | Show memory folder summary |
 | `/memory context [summary\|exact]` | Preview memory context |
-| `/memory review [limit]` | Show read-only cleanup candidates for agent review |
+| `/memory review [scope]` | Ask the agent to review memory and apply safe cleanup |
 
 ## Available Tools
 

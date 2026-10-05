@@ -155,6 +155,7 @@ Never modify anything under `reference/`. To retire a writable note, move it to 
 
 ## Intelligent Review
 
+- `/memory review` starts an agent-driven review; it is not a separate interactive cleanup wizard.
 - Call `memory_review` to obtain read-only candidates and rule evidence.
 - Treat related-note candidates as leads, not proven duplicates; read every involved note before deciding.
 - Use `memory_cleanup` to archive reversible non-system notes or dismiss unchanged false positives.

@@ -12,7 +12,7 @@ import {
   type MemoryMdSettings,
   syncRepository,
 } from "./memoryMdCore.js";
-import { registerAllMemoryTools, runMemoryReviewReport } from "./tools.js";
+import { registerAllMemoryTools } from "./tools.js";
 
 /**
  * Main extension initialization.
@@ -177,12 +177,18 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   };
 
   commands.review = {
-    description: "Review memory for cleanup candidates and decide what to keep, archive, merge, or delete",
-    handler: async (args, ctx) => {
-      const parsed = Number.parseInt(args.trim(), 10);
-      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-      const text = await runMemoryReviewReport(settings, ctx, limit === undefined ? {} : { limit });
-      pi.sendMessage({ customType: "pi-memory-md-review", content: text, display: true });
+    description: "Ask the agent to review memory and apply safe cleanup",
+    handler: async (args, _ctx) => {
+      const scope = args.trim();
+      pi.sendUserMessage([
+        "Review my memory now using the memory_review tool.",
+        "Read every candidate note before making a semantic decision.",
+        "Treat related-note candidates as leads, not proven duplicates.",
+        "Use memory_cleanup for safe archive, merge, update, or dismissal operations.",
+        "Ask for approval before deletion, system-memory changes, bulk changes, or any other dangerous operation.",
+        scope ? `Requested scope or limit: ${scope}` : "Review all writable memory areas.",
+        "Report what you inspected, changed, dismissed, and left untouched.",
+      ].join("\n"));
     },
   };
 

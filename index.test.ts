@@ -24,11 +24,21 @@ beforeEach(() => {
 
 function memoryCommand() {
   const registerCommand = vi.fn();
-  memoryMdExtension({ on: vi.fn(), registerCommand, sendMessage: vi.fn() } as any);
+  const sendUserMessage = vi.fn();
+  memoryMdExtension({ on: vi.fn(), registerCommand, sendMessage: vi.fn(), sendUserMessage } as any);
   expect(registerCommand).toHaveBeenCalledTimes(1);
   expect(registerCommand.mock.calls[0][0]).toBe("memory");
   return registerCommand.mock.calls[0][1];
 }
+
+it("starts an agent-driven review from the memory command", async () => {
+  const sendUserMessage = vi.fn();
+  const registerCommand = vi.fn();
+  memoryMdExtension({ on: vi.fn(), registerCommand, sendMessage: vi.fn(), sendUserMessage } as any);
+  await registerCommand.mock.calls[0][1].handler("review 10", { ui: { notify: vi.fn() } });
+  expect(sendUserMessage).toHaveBeenCalledWith(expect.stringContaining("memory_review"));
+  expect(sendUserMessage).toHaveBeenCalledWith(expect.stringContaining("Requested scope or limit: 10"));
+});
 
 it("completes memory subcommands and context modes", () => {
   const command = memoryCommand();

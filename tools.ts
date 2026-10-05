@@ -333,16 +333,6 @@ export function registerMemorySync(
 // Agent-driven review
 // ============================================================================
 
-/** Build the same read-only report used by the model-callable scanner. */
-export async function runMemoryReviewReport(
-  settings: MemoryMdSettings,
-  ctx: ExtensionContext,
-  options: { limit?: number } = {},
-): Promise<string> {
-  const memoryDir = getMemoryDir(settings, ctx.cwd);
-  return formatReviewReport(reviewMemories(memoryDir, options.limit === undefined ? {} : { limit: options.limit }));
-}
-
 export function registerMemoryReview(pi: ExtensionAPI, settings: MemoryMdSettings): void {
   pi.registerTool({
     name: "memory_review",
