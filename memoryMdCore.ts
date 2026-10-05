@@ -209,14 +209,7 @@ function validateFrontmatter(data: ParsedFrontmatter): { valid: boolean; error?:
     return { valid: false, error: "'tags' must be an array of strings" };
   }
 
-  if (frontmatter.scope !== undefined && !["system", "project", "long-term", "reference", "archive"].includes(frontmatter.scope)) {
-    return { valid: false, error: "'scope' must be a known memory scope" };
-  }
-
-  if (frontmatter.load !== undefined && !["always", "project", "index", "search-only"].includes(frontmatter.load)) {
-    return { valid: false, error: "'load' must be a known load policy" };
-  }
-
+  // Unknown metadata is retained for compatibility, but does not control loading.
   return { valid: true };
 }
 
@@ -301,8 +294,6 @@ function createDefaultFiles(memoryDir: string): void {
       {
         description: "Always-loaded memory policy and tier usage rules",
         tags: ["memory", "policy", "system"],
-        scope: "system",
-        load: "always",
         created: getCurrentDate(),
       },
     );
@@ -313,8 +304,6 @@ function createDefaultFiles(memoryDir: string): void {
     writeMemoryFile(identityFile, "# User Identity\n\nCustomize this file with your information.", {
       description: "User identity and background",
       tags: ["user", "identity"],
-      scope: "long-term",
-      load: "index",
       created: getCurrentDate(),
     });
   }
@@ -327,8 +316,6 @@ function createDefaultFiles(memoryDir: string): void {
       {
         description: "Always-loaded user habits and code style preferences",
         tags: ["user", "preferences", "system"],
-        scope: "system",
-        load: "always",
         created: getCurrentDate(),
       },
     );
