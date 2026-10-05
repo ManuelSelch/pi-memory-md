@@ -329,20 +329,6 @@ function singleLine(text: string, maxChars = 160): string {
   return flat.length > maxChars ? `${flat.slice(0, maxChars - 1)}…` : flat;
 }
 
-/** Count .md files per top-level directory outside of always-loaded system/. */
-function summarizeExternalAreas(memoryDir: string): string[] {
-  if (!fs.existsSync(memoryDir)) return [];
-
-  return fs
-    .readdirSync(memoryDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name !== "system" && !entry.name.startsWith("."))
-    .map((entry) => {
-      const count = listMemoryFiles(path.join(memoryDir, entry.name)).length;
-      return `- ${entry.name}/ (${count} files)`;
-    })
-    .filter((line) => !line.endsWith("(0 files)"));
-}
-
 function appendFileBody(lines: string[], memoryDir: string, filePath: string, titlePrefix = ""): void {
   const memory = readMemoryFile(filePath);
   if (!memory) return;
@@ -375,7 +361,6 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   systemFileCount: number;
   injectedIndexEntries: number;
   omittedIndexEntries: number;
-  externalAreas: string[];
   budgetTokens: number;
   estimatedTokens: number;
 } {
@@ -390,7 +375,6 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
       systemFileCount: 0,
       injectedIndexEntries: 0,
       omittedIndexEntries: 0,
-      externalAreas: [],
       budgetTokens,
       estimatedTokens: 0,
     };
@@ -409,7 +393,6 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
       systemFileCount: 0,
       injectedIndexEntries: 0,
       omittedIndexEntries: 0,
-      externalAreas: [],
       budgetTokens,
       estimatedTokens: 0,
     };
@@ -464,11 +447,6 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
     lines.push(`- … ${omitted} memory file(s) omitted for space; use memory_list to see them.`);
   }
 
-  const external = summarizeExternalAreas(memoryDir);
-  if (external.length > 0) {
-    lines.push("", "External/search-only memory:", "", ...external);
-  }
-
   const context = lines.join("\n");
   return {
     context,
@@ -476,7 +454,6 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
     systemFileCount: systemFiles.length,
     injectedIndexEntries: entries.length + systemFiles.length,
     omittedIndexEntries: omitted,
-    externalAreas: external,
     budgetTokens,
     estimatedTokens: Math.ceil(context.length / CHARS_PER_TOKEN),
   };
@@ -517,10 +494,6 @@ export function buildMemoryContextPreview(
     `- Injected full bodies/index entries: **${parts.injectedIndexEntries}**`,
     `- Omitted by budget: **${parts.omittedIndexEntries}**`,
     "- `system/` file bodies are injected in full; indexed memory needs `memory_read` for details.",
-    "",
-    "## External memory shown in context",
-    "",
-    ...(parts.externalAreas.length > 0 ? parts.externalAreas : ["- none"]),
     "",
     "## Exact context",
     "",
