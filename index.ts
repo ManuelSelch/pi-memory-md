@@ -261,10 +261,10 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   pi.registerCommand("memory", {
     description: "Manage memory: init, status, review, context, refresh, check",
     getArgumentCompletions: (prefix) => {
-      const candidates = /^context\s/.test(prefix)
-        ? ["context summary", "context exact"]
-        : Object.keys(commands);
-      const matches = candidates.filter((value) => value.startsWith(prefix));
+      const contextMatch = prefix.match(/^context\s+(.*)$/);
+      const candidates = contextMatch ? ["summary", "exact"] : Object.keys(commands);
+      const currentPrefix = contextMatch?.[1] ?? prefix;
+      const matches = candidates.filter((value) => value.startsWith(currentPrefix));
       return matches.length ? matches.map((value) => ({ value, label: value })) : null;
     },
     handler: async (args, ctx) => {

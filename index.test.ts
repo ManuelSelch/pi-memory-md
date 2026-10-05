@@ -36,9 +36,9 @@ it("completes memory subcommands and context modes", () => {
     .toEqual(["check", "context", "init", "refresh", "review", "status"]);
   expect(command.getArgumentCompletions("re").map((item: any) => item.value))
     .toEqual(["review", "refresh"]);
-  expect(command.getArgumentCompletions("context e")).toEqual([{ value: "context exact", label: "context exact" }]);
+  expect(command.getArgumentCompletions("context e")).toEqual([{ value: "exact", label: "exact" }]);
   expect(command.getArgumentCompletions("context ").map((item: any) => item.value))
-    .toEqual(["context summary", "context exact"]);
+    .toEqual(["summary", "exact"]);
   expect(command.getArgumentCompletions("invalid")).toBeNull();
 });
 
