@@ -97,13 +97,11 @@ Markdown content...
 ```
 ~/.pi/memory-md/
 └── project-name/
-    ├── core/
-    │   ├── user/           # Your preferences
-    │   │   ├── identity.md
-    │   │   └── prefer.md
-    │   └── project/        # Project context
-    │       └── tech-stack.md
-    └── reference/          # On-demand docs
+    ├── system/             # Always-loaded policies and preferences
+    ├── projects/           # Project-specific memory
+    ├── long-term/          # Durable user and technical knowledge
+    ├── reference/          # Read-only, on-demand docs
+    └── archive/            # Retired memory
 ```
 
 ## Configuration
@@ -183,7 +181,7 @@ You can also explicitly request operations:
 ```
 You: List all memory files for this project.
 You: Search memory for "typescript" preferences.
-You: Read core/user/identity.md
+You: Read long-term/user/identity.md
 You: Sync my changes to the repository.
 ```
 

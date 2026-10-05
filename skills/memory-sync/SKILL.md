@@ -39,7 +39,7 @@ Auto-commits changes before pushing.
 memory_check()
 ```
 
-This verifies that the folder structure is correct (e.g., files are in `core/project/` not in a root `project/` folder).
+This verifies that the folder structure is correct (e.g., project notes are in `projects/<project-name>/`, not in an unrelated root folder).
 
 ### Status
 

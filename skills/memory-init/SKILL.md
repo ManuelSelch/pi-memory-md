@@ -65,11 +65,15 @@ memory_init()
 **This does:**
 1. Clones the GitHub repository
 2. Creates directory structure:
-   - `core/user/` - Your identity and preferences
-   - `core/project/` - Project-specific info
+   - `system/` - Always-loaded policies and preferences
+   - `projects/` - Project-specific info
+   - `long-term/user/` - Durable user information
+   - `long-term/tech/` - Durable technical knowledge
+   - `reference/` - Read-only external documentation
 3. Creates default files:
-   - `core/user/identity.md` - User identity template
-   - `core/user/prefer.md` - User preferences template
+   - `system/memory-policy.md` - Memory policy template
+   - `system/preferences.md` - User preferences template
+   - `long-term/user/identity.md` - User identity template
 
 **Example output:**
 ```
@@ -77,14 +81,16 @@ Memory repository initialized:
 Cloned repository successfully
 
 Created directory structure:
-  - core/user
-  - core/project
+  - system
+  - projects
+  - long-term/user
+  - long-term/tech
   - reference
 ```
 
 ## Step 5: Import Preferences from AGENTS.md
 
-After initialization, extract relevant preferences from your `AGENTS.md` file to populate `prefer.md`:
+After initialization, extract relevant preferences from your `AGENTS.md` file to populate `system/preferences.md`:
 
 1. **Read AGENTS.md** (typically at `.pi/agent/AGENTS.md` or project root)
 
@@ -98,14 +104,14 @@ After initialization, extract relevant preferences from your `AGENTS.md` file to
 
 3. **Present extracted content** to the user in a summarized format
 
-4. **Ask first confirmation**: Include these extracted preferences in `prefer.md`?
+4. **Ask first confirmation**: Include these extracted preferences in `system/preferences.md`?
    ```
    Found these preferences in AGENTS.md:
    - IMPORTANT Rules: [summary]
    - Code Quality Principles: [summary]
    - Coding Style: [summary]
 
-   Include these in core/user/prefer.md? (yes/no)
+   Include these in system/preferences.md? (yes/no)
    ```
 
 5. **Ask for additional content**: Is there anything else you want to add to your preferences?
@@ -113,7 +119,7 @@ After initialization, extract relevant preferences from your `AGENTS.md` file to
    Any additional preferences you'd like to include? (e.g., communication style, specific tools, workflows)
    ```
 
-6. **Update prefer.md** with:
+6. **Update system/preferences.md** with:
    - Extracted content from AGENTS.md (if user confirmed)
    - Any additional preferences provided by user
 
@@ -133,7 +139,7 @@ List files:
 memory_list()
 ```
 
-Should show: `core/user/identity.md`, `core/user/prefer.md`
+Should show: `system/preferences.md`, `long-term/user/identity.md`
 
 ## Project Structure
 
@@ -143,13 +149,16 @@ Each project gets its own folder in the repository:
 
 ```
 {localPath}/
-├── project-a/
-│   ├── core/
-│   │   ├── user/
-│   │   │   ├── identity.md
-│   │   │   └── prefer.md
-│   │   └── project/
-│   └── reference/
+├── system/
+│   ├── memory-policy.md
+│   └── preferences.md
+├── projects/
+│   └── project-a/
+├── long-term/
+│   ├── user/
+│   │   └── identity.md
+│   └── tech/
+└── reference/
 ├── project-b/
 │   └── ...
 └── project-c/
@@ -259,9 +268,9 @@ After setup, verify:
 After initialization:
 
 1. **Import preferences** - Agent will prompt to extract from AGENTS.md
-2. Edit your identity: `memory_read(path="core/user/identity.md")` then `memory_write(...)` to update
-3. Review preferences: `memory_read(path="core/user/prefer.md")`
-4. Add project context: `memory_write(path="core/project/overview.md", ...)`
+2. Edit your identity: `memory_read(path="long-term/user/identity.md")` then `memory_write(...)` to update
+3. Review preferences: `memory_read(path="system/preferences.md")`
+4. Add project context: `memory_write(path="projects/<project>/overview.md", ...)
 5. Learn more: See `memory-management` skill
 
 ## Related Skills
