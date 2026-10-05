@@ -153,6 +153,14 @@ Use `memory_write` with the same path to update a note. The extension preserves 
 
 Never modify anything under `reference/`. To retire a writable note, move it to `archive/` with the cleanup workflow rather than adding a status field.
 
+## Intelligent Review
+
+- Call `memory_review` to obtain read-only candidates and rule evidence.
+- Treat related-note candidates as leads, not proven duplicates; read every involved note before deciding.
+- Use `memory_cleanup` to archive reversible non-system notes or dismiss unchanged false positives.
+- Permanent deletion and any system-memory mutation require user approval.
+- Never propose or apply cleanup under `reference/`.
+
 ## Maintenance
 
 - Keep system memory small and durable.

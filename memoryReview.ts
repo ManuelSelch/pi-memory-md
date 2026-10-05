@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { isReadOnlyMemoryPath, listMemoryFiles, readMemoryFile } from "./memoryMdCore.js";
 
 /**
@@ -56,11 +57,15 @@ export interface ReviewNote {
   tags: string[];
   updated?: string | undefined;
   bodyBytes: number;
+  contentHash: string;
 }
 
-export type FindingKind = "duplicates" | "fragmentation" | "timeboxed" | "volatile" | "stale" | "stub";
+export type FindingKind = "related" | "fragmentation" | "timeboxed" | "volatile" | "stale" | "stub";
 
-export interface Finding {
+export interface ReviewCandidate {
+  id: string;
+  fingerprint: string;
+  dismissed: boolean;
   kind: FindingKind;
   /** Higher sorts first. */
   severity: number;
@@ -71,6 +76,37 @@ export interface Finding {
   suggestedKeep?: string;
   /** Why that member was suggested. Always a hint, never authoritative. */
   keeperReason?: string;
+  evidence: Record<string, unknown>;
+}
+
+/** @deprecated Use ReviewCandidate. */
+export type Finding = ReviewCandidate;
+type RawFinding = Omit<ReviewCandidate, "id" | "fingerprint" | "dismissed">;
+
+export const DISMISSALS_FILE = ".memory-review-dismissals.json";
+
+interface DismissalStore {
+  version: 1;
+  fingerprints: Record<string, { candidateId: string; dismissedAt: string }>;
+}
+
+function hash(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+function loadDismissals(memoryDir: string): DismissalStore {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path.join(memoryDir, DISMISSALS_FILE), "utf8")) as DismissalStore;
+    return parsed.version === 1 && parsed.fingerprints ? parsed : { version: 1, fingerprints: {} };
+  } catch {
+    return { version: 1, fingerprints: {} };
+  }
+}
+
+export function dismissReviewCandidate(memoryDir: string, candidateId: string, fingerprint: string): void {
+  const store = loadDismissals(memoryDir);
+  store.fingerprints[fingerprint] = { candidateId, dismissedAt: new Date().toISOString() };
+  fs.writeFileSync(path.join(memoryDir, DISMISSALS_FILE), `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
 
 function firstHeading(content: string): string {
@@ -107,6 +143,12 @@ export function collectReviewNotes(memoryDir: string): ReviewNote[] {
       tags: (memory.frontmatter.tags ?? []).map((tag) => tag.toLocaleLowerCase().trim()).filter(Boolean),
       updated: memory.frontmatter.updated ?? memory.frontmatter.created,
       bodyBytes: memory.content.length,
+      contentHash: hash(JSON.stringify({
+        content: memory.content,
+        description: memory.frontmatter.description,
+        tags: memory.frontmatter.tags,
+        updated: memory.frontmatter.updated,
+      })),
     });
   }
   return notes.sort((a, b) => a.relPath.localeCompare(b.relPath));
@@ -220,13 +262,13 @@ function discriminativeTags(members: readonly ReviewNote[]): Map<string, string[
  *   to be similar to every other member keeps clusters to things that really are
  *   about the same subject.
  */
-export function findDuplicateClusters(notes: readonly ReviewNote[]): Finding[] {
+export function findRelatedCandidates(notes: readonly ReviewNote[]): RawFinding[] {
   const byFolder = new Map<string, ReviewNote[]>();
   for (const note of notes) {
     byFolder.set(note.folder, [...(byFolder.get(note.folder) ?? []), note]);
   }
 
-  const findings: Finding[] = [];
+  const findings: RawFinding[] = [];
   for (const [folder, members] of byFolder) {
     if (members.length < 2) continue;
 
@@ -267,7 +309,7 @@ export function findDuplicateClusters(notes: readonly ReviewNote[]): Finding[] {
       const keeper = suggestKeeper(cluster);
 
       findings.push({
-        kind: "duplicates",
+        kind: "related",
         severity: 100 + cluster.length,
         paths: ranked.map((note) => note.relPath),
         suggestedKeep: keeper.note.relPath,
@@ -279,19 +321,24 @@ export function findDuplicateClusters(notes: readonly ReviewNote[]): Finding[] {
               `${note.relPath} — updated ${note.updated ?? "unknown"}, ${note.bodyBytes} bytes — ${note.description || note.title}`,
           )
           .join("\n"),
+        evidence: {
+          averageTagSimilarity: Number(average.toFixed(3)),
+          discriminativeTags: Object.fromEntries(cluster.map((note) => [note.relPath, tagsFor.get(note.relPath) ?? []])),
+          pairwiseScores: scores.map((score) => Number(score.toFixed(3))),
+        },
       });
     }
   }
   return findings;
 }
 
-export function findFragmentation(notes: readonly ReviewNote[]): Finding[] {
+export function findFragmentation(notes: readonly ReviewNote[]): RawFinding[] {
   const byFolder = new Map<string, ReviewNote[]>();
   for (const note of notes) {
     byFolder.set(note.folder, [...(byFolder.get(note.folder) ?? []), note]);
   }
 
-  const findings: Finding[] = [];
+  const findings: RawFinding[] = [];
   for (const [folder, members] of byFolder) {
     if (members.length <= FOLDER_FILE_GUIDELINE) continue;
     findings.push({
@@ -302,12 +349,13 @@ export function findFragmentation(notes: readonly ReviewNote[]): Finding[] {
       detail:
         `A folder past ${FOLDER_FILE_GUIDELINE} notes has usually become a log rather than memory.\n` +
         "Consider consolidating into one living note per work stream and archiving finished experiments.",
+      evidence: { folder, noteCount: members.length, guideline: FOLDER_FILE_GUIDELINE },
     });
   }
   return findings;
 }
 
-function matchRule(notes: readonly ReviewNote[], pattern: RegExp, kind: FindingKind, severity: number, advice: string): Finding[] {
+function matchRule(notes: readonly ReviewNote[], pattern: RegExp, kind: FindingKind, severity: number, advice: string): RawFinding[] {
   return notes
     .filter((note) => pattern.test(note.description) || pattern.test(note.title))
     .map((note) => ({
@@ -316,10 +364,14 @@ function matchRule(notes: readonly ReviewNote[], pattern: RegExp, kind: FindingK
       paths: [note.relPath],
       summary: `${note.relPath} — ${note.description || note.title}`,
       detail: advice + (note.area === "system" ? "\nThis note sits in always-loaded system memory, so the cost is paid every session." : ""),
+      evidence: {
+        matchedText: pattern.exec(note.description)?.[0] ?? pattern.exec(note.title)?.[0] ?? "",
+        source: pattern.test(note.description) ? "description" : "title",
+      },
     }));
 }
 
-export function findTimeboxed(notes: readonly ReviewNote[]): Finding[] {
+export function findTimeboxed(notes: readonly ReviewNote[]): RawFinding[] {
   return matchRule(
     notes,
     TIMEBOXED_PATTERN,
@@ -329,7 +381,7 @@ export function findTimeboxed(notes: readonly ReviewNote[]): Finding[] {
   );
 }
 
-export function findVolatile(notes: readonly ReviewNote[]): Finding[] {
+export function findVolatile(notes: readonly ReviewNote[]): RawFinding[] {
   return matchRule(
     notes,
     VOLATILE_PATTERN,
@@ -339,13 +391,13 @@ export function findVolatile(notes: readonly ReviewNote[]): Finding[] {
   );
 }
 
-export function findStale(notes: readonly ReviewNote[], now: number = Date.now()): Finding[] {
+export function findStale(notes: readonly ReviewNote[], now: number = Date.now()): RawFinding[] {
   const byFolder = new Map<string, ReviewNote[]>();
   for (const note of notes) {
     byFolder.set(note.folder, [...(byFolder.get(note.folder) ?? []), note]);
   }
 
-  const findings: Finding[] = [];
+  const findings: RawFinding[] = [];
   for (const members of byFolder.values()) {
     const times = members.map((note) => parseDate(note.updated)).filter((time): time is number => time !== undefined);
     if (times.length === 0) continue;
@@ -364,13 +416,14 @@ export function findStale(notes: readonly ReviewNote[], now: number = Date.now()
         paths: [note.relPath],
         summary: `${note.relPath} — updated ${note.updated}, ${Math.round(ageDays)} days old`,
         detail: `Roughly ${Math.round(lagDays)} days behind the rest of its folder, which suggests abandoned work.`,
+        evidence: { ageDays: Math.round(ageDays), folderLagDays: Math.round(lagDays), staleDays: STALE_DAYS },
       });
     }
   }
   return findings;
 }
 
-export function findStubs(notes: readonly ReviewNote[]): Finding[] {
+export function findStubs(notes: readonly ReviewNote[]): RawFinding[] {
   return notes
     .filter((note) => note.bodyBytes < STUB_BYTES)
     .map((note) => ({
@@ -379,39 +432,62 @@ export function findStubs(notes: readonly ReviewNote[]): Finding[] {
       paths: [note.relPath],
       summary: `${note.relPath} — ${note.bodyBytes} bytes of content`,
       detail: "Very short note; consider folding it into a related note.",
+      evidence: { bodyBytes: note.bodyBytes, thresholdBytes: STUB_BYTES },
     }));
 }
 
 export interface ReviewOptions {
   now?: number;
   limit?: number;
+  area?: string;
+  folder?: string;
+  kind?: FindingKind;
+  includeDismissed?: boolean;
 }
 
 export interface ReviewResult {
-  findings: Finding[];
+  findings: ReviewCandidate[];
   noteCount: number;
   totalFindings: number;
 }
 
-export function reviewMemories(memoryDir: string, options: ReviewOptions = {}): ReviewResult {
-  const notes = collectReviewNotes(memoryDir);
-  const now = options.now ?? Date.now();
+function finalizeCandidate(raw: RawFinding, notesByPath: Map<string, ReviewNote>, dismissed: DismissalStore): ReviewCandidate {
+  const paths = [...raw.paths].sort();
+  const id = `${raw.kind}-${hash(`${raw.kind}\n${paths.join("\n")}`)}`;
+  const state = paths.map((relPath) => `${relPath}:${notesByPath.get(relPath)?.contentHash ?? "missing"}`).join("\n");
+  const fingerprint = hash(`${id}\n${state}`);
+  return { ...raw, paths: raw.paths, id, fingerprint, dismissed: Boolean(dismissed.fingerprints[fingerprint]) };
+}
 
-  const all = [
-    ...findDuplicateClusters(notes),
+export function reviewMemories(memoryDir: string, options: ReviewOptions = {}): ReviewResult {
+  const collected = collectReviewNotes(memoryDir);
+  const notes = collected.filter((note) =>
+    (!options.area || note.area === options.area) &&
+    (!options.folder || note.folder === options.folder || note.folder.startsWith(`${options.folder}/`)),
+  );
+  const now = options.now ?? Date.now();
+  const notesByPath = new Map(notes.map((note) => [note.relPath, note]));
+  const dismissals = loadDismissals(memoryDir);
+
+  const candidates = [
+    ...findRelatedCandidates(notes),
     ...findTimeboxed(notes),
     ...findFragmentation(notes),
     ...findVolatile(notes),
     ...findStale(notes, now),
     ...findStubs(notes),
-  ].sort((a, b) => b.severity - a.severity || a.paths[0]!.localeCompare(b.paths[0]!));
+  ]
+    .filter((candidate) => !options.kind || candidate.kind === options.kind)
+    .map((candidate) => finalizeCandidate(candidate, notesByPath, dismissals))
+    .filter((candidate) => options.includeDismissed || !candidate.dismissed)
+    .sort((a, b) => b.severity - a.severity || a.paths[0]!.localeCompare(b.paths[0]!));
 
   const limit = options.limit ?? 20;
-  return { findings: all.slice(0, limit), noteCount: notes.length, totalFindings: all.length };
+  return { findings: candidates.slice(0, limit), noteCount: notes.length, totalFindings: candidates.length };
 }
 
 const KIND_TITLES: Record<FindingKind, string> = {
-  duplicates: "Duplicate clusters",
+  related: "Related-note candidates",
   fragmentation: "Over-fragmented folders",
   timeboxed: "Time-boxed content",
   volatile: "Volatile facts",
@@ -441,8 +517,9 @@ export function formatReviewReport(result: ReviewResult): string {
     for (const finding of group) {
       lines.push(`- **${finding.summary}**`);
       for (const line of finding.detail.split("\n")) lines.push(`  ${line}`);
+      lines.push(`  Evidence: \`${JSON.stringify(finding.evidence)}\``);
       if (finding.suggestedKeep) {
-        lines.push(`  Possible keeper (${finding.keeperReason ?? "heuristic"}): \`${finding.suggestedKeep}\` — check the descriptions above before trusting this.`);
+        lines.push(`  Possible broad/new note (${finding.keeperReason ?? "heuristic"}): \`${finding.suggestedKeep}\` — check the descriptions above before trusting this.`);
       }
       lines.push("");
     }

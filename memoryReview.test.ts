@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assertWritable, isReadOnlyMemoryPath, writeMemoryFile } from "./memoryMdCore.js";
+import { registerMemoryCleanup, registerMemoryDelete, registerMemoryReview, registerMemoryWrite } from "./tools.js";
 import {
   collectReviewNotes,
-  findDuplicateClusters,
+  dismissReviewCandidate,
+  findRelatedCandidates,
   findStale,
   findStubs,
   findTimeboxed,
@@ -92,7 +94,7 @@ describe("tagSimilarity", () => {
   });
 });
 
-describe("findDuplicateClusters", () => {
+describe("findRelatedCandidates", () => {
   it("clusters the allowed-unbalance chain and suggests the newest as keeper", () => {
     write("projects/bcx/allowed-unbalance-12-7.md", {
       description: "Allowed-unbalance high-speed limits",
@@ -112,7 +114,7 @@ describe("findDuplicateClusters", () => {
       body: "# Current boundary\n\n".padEnd(2000, "x"),
     });
 
-    const findings = findDuplicateClusters(collectReviewNotes(memoryDir));
+    const findings = findRelatedCandidates(collectReviewNotes(memoryDir));
     expect(findings).toHaveLength(1);
     expect(findings[0]!.paths).toHaveLength(3);
     expect(findings[0]!.suggestedKeep).toBe("projects/bcx/current-boundary-600-25.md");
@@ -123,7 +125,7 @@ describe("findDuplicateClusters", () => {
     write("projects/bcx/teach-importer.md", { description: "Importer", tags: ["importer", "recordings"] });
     write("projects/bcx/audit-timeline.md", { description: "Timeline", tags: ["audit-trail", "schema"] });
 
-    expect(findDuplicateClusters(collectReviewNotes(memoryDir))).toHaveLength(0);
+    expect(findRelatedCandidates(collectReviewNotes(memoryDir))).toHaveLength(0);
   });
 
   // Regression: union-find chained A~B~C and turned a whole 13-note project
@@ -137,7 +139,7 @@ describe("findDuplicateClusters", () => {
     const notes = collectReviewNotes(memoryDir);
     expect(tagSimilarity(notes[0]!.tags, notes[2]!.tags)).toBeLessThan(SIMILARITY_THRESHOLD);
 
-    const findings = findDuplicateClusters(notes);
+    const findings = findRelatedCandidates(notes);
     for (const finding of findings) {
       const paths = finding.paths;
       expect(paths.includes("projects/a/left.md") && paths.includes("projects/a/right.md")).toBe(false);
@@ -154,7 +156,7 @@ describe("findDuplicateClusters", () => {
     });
 
     expect(collectReviewNotes(memoryDir)).toHaveLength(distinct.length);
-    expect(findDuplicateClusters(collectReviewNotes(memoryDir))).toHaveLength(0);
+    expect(findRelatedCandidates(collectReviewNotes(memoryDir))).toHaveLength(0);
   });
 
   it("does not cluster similar notes across different project folders", () => {
@@ -162,7 +164,7 @@ describe("findDuplicateClusters", () => {
     write("projects/one/graph.md", { description: "Graph focus", tags });
     write("projects/two/graph.md", { description: "Graph focus", tags });
 
-    expect(findDuplicateClusters(collectReviewNotes(memoryDir))).toHaveLength(0);
+    expect(findRelatedCandidates(collectReviewNotes(memoryDir))).toHaveLength(0);
   });
 });
 
@@ -215,9 +217,121 @@ describe("content rules", () => {
   });
 });
 
+describe("memory_review tool", () => {
+  it("returns structured evidence without changing the filesystem", async () => {
+    write("projects/a/one.md", { description: "One", tags: ["x", "y"] });
+    write("projects/a/two.md", { description: "Two", tags: ["x", "y"] });
+    let tool: any;
+    registerMemoryReview({ registerTool: (definition: any) => { tool = definition; } } as any, { localPath: memoryDir });
+    const before = fs.readdirSync(memoryDir, { recursive: true }).map(String).sort();
+    const result = await tool.execute("call", { kind: "related" }, undefined, undefined, { cwd: memoryDir });
+    expect(result.details.readOnly).toBe(true);
+    expect(result.details.findings[0].evidence.averageTagSimilarity).toBe(1);
+    expect(fs.readdirSync(memoryDir, { recursive: true }).map(String).sort()).toEqual(before);
+  });
+});
+
+describe("memory_cleanup", () => {
+  function cleanupTool() {
+    let tool: any;
+    registerMemoryCleanup({ registerTool: (definition: any) => { tool = definition; } } as any, { localPath: memoryDir });
+    return tool;
+  }
+
+  function execute(tool: any, params: Record<string, unknown>, overrides: Record<string, unknown> = {}) {
+    const ctx = { cwd: memoryDir, hasUI: false, ui: { confirm: async () => false }, ...overrides };
+    return tool.execute("call", params, undefined, undefined, ctx);
+  }
+
+  it("archives a non-system note without approval", async () => {
+    write("projects/a/old.md", { description: "Old", tags: ["old"] });
+    const original = fs.readFileSync(path.join(memoryDir, "projects/a/old.md"), "utf8");
+    const result = await execute(cleanupTool(), { action: "archive", paths: ["projects/a/old.md"] });
+    expect(result.details.success).toBe(true);
+    expect(fs.existsSync(path.join(memoryDir, "projects/a/old.md"))).toBe(false);
+    expect(fs.readFileSync(path.join(memoryDir, "archive/projects/a/old.md"), "utf8")).toBe(original);
+  });
+
+  it("rejects reference paths and existing archive destinations without partial changes", async () => {
+    write("projects/a/one.md", { description: "One" });
+    write("projects/a/two.md", { description: "Two" });
+    write("archive/projects/a/two.md", { description: "Existing" });
+    const tool = cleanupTool();
+
+    const reference = await execute(tool, { action: "archive", paths: ["reference/a.md"] });
+    expect(reference.details.success).toBe(false);
+
+    const collision = await execute(tool, { action: "archive", paths: ["projects/a/one.md", "projects/a/two.md"] });
+    expect(collision.details.success).toBe(false);
+    expect(fs.existsSync(path.join(memoryDir, "projects/a/one.md"))).toBe(true);
+    expect(fs.existsSync(path.join(memoryDir, "projects/a/two.md"))).toBe(true);
+  });
+
+  it("requires approval for bulk archives", async () => {
+    const paths = Array.from({ length: 6 }, (_, index) => `projects/a/note-${index}.md`);
+    paths.forEach((relPath, index) => write(relPath, { description: `Note ${index}` }));
+    const denied = await execute(cleanupTool(), { action: "archive", paths });
+    expect(denied.details.success).toBe(false);
+    expect(paths.every((relPath) => fs.existsSync(path.join(memoryDir, relPath)))).toBe(true);
+  });
+
+  it("requires approval for system archives", async () => {
+    write("system/preferences.md", { description: "Preferences" });
+    const tool = cleanupTool();
+    const denied = await execute(tool, { action: "archive", paths: ["system/preferences.md"] });
+    expect(denied.details.success).toBe(false);
+    expect(fs.existsSync(path.join(memoryDir, "system/preferences.md"))).toBe(true);
+
+    const approved = await execute(tool, { action: "archive", paths: ["system/preferences.md"] }, {
+      hasUI: true,
+      ui: { confirm: async () => true },
+    });
+    expect(approved.details.success).toBe(true);
+  });
+
+  it("dismisses a candidate without changing notes", async () => {
+    write("projects/a/one.md", { description: "One", tags: ["x", "y"] });
+    write("projects/a/two.md", { description: "Two", tags: ["x", "y"] });
+    const candidate = reviewMemories(memoryDir, { kind: "related" }).findings[0]!;
+    const result = await execute(cleanupTool(), {
+      action: "dismiss", candidateId: candidate.id, fingerprint: candidate.fingerprint,
+    });
+    expect(result.details.success).toBe(true);
+    expect(reviewMemories(memoryDir, { kind: "related" }).findings).toHaveLength(0);
+  });
+});
+
+describe("dangerous memory mutations", () => {
+  function registeredTool(register: (pi: any, settings: any) => void) {
+    let tool: any;
+    register({ registerTool: (definition: any) => { tool = definition; } }, { localPath: memoryDir });
+    return tool;
+  }
+
+  it("requires approval before modifying system memory", async () => {
+    write("system/preferences.md", { description: "Preferences" });
+    const tool = registeredTool(registerMemoryWrite);
+    const result = await tool.execute("call", {
+      path: "system/preferences.md", content: "# Changed", description: "Changed",
+    }, undefined, undefined, { cwd: memoryDir, hasUI: false });
+    expect(result.details.approvalRequired).toBe(true);
+    expect(fs.readFileSync(path.join(memoryDir, "system/preferences.md"), "utf8")).not.toContain("# Changed");
+  });
+
+  it("requires approval before permanent deletion", async () => {
+    write("projects/a/note.md", { description: "Note" });
+    const tool = registeredTool(registerMemoryDelete);
+    const result = await tool.execute("call", { path: "projects/a/note.md" }, undefined, undefined, {
+      cwd: memoryDir, hasUI: false,
+    });
+    expect(result.details.approvalRequired).toBe(true);
+    expect(fs.existsSync(path.join(memoryDir, "projects/a/note.md"))).toBe(true);
+  });
+});
+
 describe("suggestKeeper", () => {
   function note(relPath: string, updated: string, bodyBytes: number, description = "d"): Parameters<typeof suggestKeeper>[0][number] {
-    return { relPath, area: "projects", folder: "projects/a", description, title: "", tags: ["x"], updated, bodyBytes };
+    return { relPath, area: "projects", folder: "projects/a", description, title: "", tags: ["x"], updated, bodyBytes, contentHash: relPath };
   }
 
   // The real miss: a narrow one-incident report five days newer beat the broad
@@ -262,6 +376,33 @@ describe("reviewMemories", () => {
     expect(result.noteCount).toBe(1);
   });
 
+  it("returns stable candidate identity, evidence, and scoped filters", () => {
+    write("projects/a/one.md", { description: "Boundary A", tags: ["x", "y", "z"] });
+    write("projects/a/two.md", { description: "Boundary B", tags: ["x", "y", "z"] });
+    write("projects/b/stub.md", { description: "Tiny", body: "# Tiny" });
+
+    const first = reviewMemories(memoryDir, { folder: "projects/a", kind: "related" });
+    const second = reviewMemories(memoryDir, { folder: "projects/a", kind: "related" });
+    expect(first.noteCount).toBe(2);
+    expect(first.findings).toHaveLength(1);
+    expect(first.findings[0]!.id).toBe(second.findings[0]!.id);
+    expect(first.findings[0]!.fingerprint).toBe(second.findings[0]!.fingerprint);
+    expect(first.findings[0]!.evidence).toMatchObject({ averageTagSimilarity: 1 });
+  });
+
+  it("hides dismissed candidates until an involved note changes", () => {
+    write("projects/a/one.md", { description: "Boundary A", tags: ["x", "y", "z"] });
+    write("projects/a/two.md", { description: "Boundary B", tags: ["x", "y", "z"] });
+    const candidate = reviewMemories(memoryDir, { kind: "related" }).findings[0]!;
+
+    dismissReviewCandidate(memoryDir, candidate.id, candidate.fingerprint);
+    expect(reviewMemories(memoryDir, { kind: "related" }).findings).toHaveLength(0);
+    expect(reviewMemories(memoryDir, { kind: "related", includeDismissed: true }).findings[0]!.dismissed).toBe(true);
+
+    write("projects/a/two.md", { description: "Boundary B", tags: ["x", "y", "z"], body: "# Changed\n\nNew detail" });
+    expect(reviewMemories(memoryDir, { kind: "related" }).findings).toHaveLength(1);
+  });
+
   it("reports a clean corpus without findings", () => {
     write("system/preferences.md", { description: "Stable preferences", tags: ["user"] });
     const result = reviewMemories(memoryDir);
@@ -275,7 +416,7 @@ describe("reviewMemories", () => {
     write("projects/a/tiny.md", { description: "Tiny", tags: ["q"], body: "# t" });
 
     const result = reviewMemories(memoryDir);
-    expect(result.findings[0]!.kind).toBe("duplicates");
-    expect(formatReviewReport(result)).toContain("Duplicate clusters");
+    expect(result.findings[0]!.kind).toBe("related");
+    expect(formatReviewReport(result)).toContain("Related-note candidates");
   });
 });

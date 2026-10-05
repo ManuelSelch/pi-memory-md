@@ -17,7 +17,13 @@ import {
   syncRepository,
   writeMemoryFile,
 } from "./memoryMdCore.js";
-import { ARCHIVE_AREA, formatReviewReport, type Finding, reviewMemories } from "./memoryReview.js";
+import {
+  ARCHIVE_AREA,
+  dismissReviewCandidate,
+  formatReviewReport,
+  type FindingKind,
+  reviewMemories,
+} from "./memoryReview.js";
 import type { MemoryFrontmatter, MemoryMdSettings } from "./types.js";
 
 // Re-export types for convenience
@@ -324,204 +330,17 @@ export function registerMemorySync(
 }
 
 // ============================================================================
-// Interactive review
+// Agent-driven review
 // ============================================================================
 
-const SKIP = "Skip";
-const STOP = "Stop review";
-
-/**
- * Move a note into archive/, preserving its path so its origin stays readable.
- *
- * Archiving an already-archived note is refused rather than nesting: doing so
- * once produced `archive/archive/long-term/tech/...`, which is nobody's intent.
- */
-function archiveNote(memoryDir: string, relPath: string): string {
-  const segments = relPath.split(path.sep);
-  if (segments[0] === ARCHIVE_AREA) {
-    throw new Error(`${relPath} is already archived.`);
-  }
-
-  const from = path.join(memoryDir, relPath);
-  let to = path.join(memoryDir, ARCHIVE_AREA, relPath);
-  if (fs.existsSync(to)) {
-    const parsed = path.parse(to);
-    to = path.join(parsed.dir, `${parsed.name}-${getCurrentDate()}${parsed.ext}`);
-  }
-
-  fs.mkdirSync(path.dirname(to), { recursive: true });
-  fs.renameSync(from, to);
-  return path.relative(memoryDir, to);
-}
-
-/**
- * Concatenate a cluster into one note.
- *
- * Bodies are kept verbatim under per-source headings rather than summarised:
- * merging must never silently lose content, and a human or a later agent pass
- * can tidy the result once it is all in one file.
- */
-function mergeNotes(memoryDir: string, members: string[], targetRel: string): void {
-  const sources = members.map((relPath) => ({ relPath, memory: readMemoryFile(path.join(memoryDir, relPath)) }));
-  const keeper = sources.find((source) => source.relPath === targetRel) ?? sources[0]!;
-
-  const tags = Array.from(new Set(sources.flatMap((source) => source.memory?.frontmatter.tags ?? [])));
-  const description = keeper.memory?.frontmatter.description || `Merged notes from ${members.length} files`;
-
-  const body = sources
-    .map(({ relPath, memory }) => `## From ${path.basename(relPath)}\n\n${(memory?.content ?? "").trim()}`)
-    .join("\n\n");
-
-  const targetPath = path.join(memoryDir, targetRel);
-  const created = readMemoryFile(targetPath)?.frontmatter.created;
-  writeMemoryFile(targetPath, `${body}\n`, {
-    description,
-    tags,
-    created: created || getCurrentDate(),
-    updated: getCurrentDate(),
-  });
-
-  for (const { relPath } of sources) {
-    if (relPath === targetRel) continue;
-    const full = path.join(memoryDir, relPath);
-    if (fs.existsSync(full)) fs.unlinkSync(full);
-  }
-}
-
-/** Archive one note, reporting failures instead of aborting the whole review. */
-function tryArchive(ctx: ExtensionContext, memoryDir: string, relPath: string, log: string[]): void {
-  try {
-    log.push(`archived ${relPath} -> ${archiveNote(memoryDir, relPath)}`);
-  } catch (error) {
-    ctx.ui.notify(`Could not archive ${relPath}: ${error instanceof Error ? error.message : String(error)}`, "error");
-  }
-}
-
-async function handleCluster(
-  ctx: ExtensionContext,
-  memoryDir: string,
-  finding: Finding,
-  log: string[],
-): Promise<boolean> {
-  const keeper = finding.suggestedKeep ?? finding.paths[0]!;
-  const others = finding.paths.filter((relPath) => relPath !== keeper);
-  const KEEP_DELETE = `Keep ${path.basename(keeper)}, delete the other ${others.length}`;
-  const KEEP_ARCHIVE = `Keep ${path.basename(keeper)}, archive the other ${others.length}`;
-  const CHOOSE = "Choose which one to keep";
-  const MERGE = "Merge all into one note";
-
-  const choice = await ctx.ui.select(finding.summary, [SKIP, KEEP_DELETE, KEEP_ARCHIVE, CHOOSE, MERGE, STOP]);
-  if (choice === undefined || choice === STOP) return false;
-  if (choice === SKIP) return true;
-
-  if (choice === CHOOSE) {
-    const picked = await ctx.ui.select("Keep which note?", [...finding.paths, SKIP]);
-    if (picked === undefined || picked === SKIP) return picked !== undefined;
-    const rest = finding.paths.filter((relPath) => relPath !== picked);
-    const how = await ctx.ui.select(`Keep ${path.basename(picked)} — what about the other ${rest.length}?`, [
-      "Archive them",
-      "Delete them",
-      SKIP,
-    ]);
-    if (how === undefined || how === SKIP) return how !== undefined;
-    for (const relPath of rest) {
-      if (how === "Archive them") tryArchive(ctx, memoryDir, relPath, log);
-      else {
-        fs.unlinkSync(path.join(memoryDir, relPath));
-        log.push(`deleted ${relPath}`);
-      }
-    }
-    return true;
-  }
-
-  if (choice === MERGE) {
-    const suggested = path.join(path.dirname(keeper), `${path.basename(path.dirname(keeper))}-merged.md`);
-    const target = await ctx.ui.input("Merged note path", suggested);
-    if (target === undefined) return true;
-    const targetRel = target.trim() || suggested;
-    const guard = assertWritable(memoryDir, path.join(memoryDir, targetRel));
-    if (guard) {
-      ctx.ui.notify(guard, "error");
-      return true;
-    }
-    mergeNotes(memoryDir, finding.paths, targetRel);
-    log.push(`merged ${finding.paths.length} notes into ${targetRel}`);
-    return true;
-  }
-
-  for (const relPath of others) {
-    if (choice === KEEP_ARCHIVE) tryArchive(ctx, memoryDir, relPath, log);
-    else {
-      fs.unlinkSync(path.join(memoryDir, relPath));
-      log.push(`deleted ${relPath}`);
-    }
-  }
-  return true;
-}
-
-async function handleSingle(
-  ctx: ExtensionContext,
-  memoryDir: string,
-  finding: Finding,
-  log: string[],
-): Promise<boolean> {
-  const relPath = finding.paths[0]!;
-  const DELETE = "Delete";
-  const ARCHIVE = "Archive";
-  const choice = await ctx.ui.select(`${finding.summary}\n${finding.detail}`, [SKIP, ARCHIVE, DELETE, STOP]);
-  if (choice === undefined || choice === STOP) return false;
-  if (choice === SKIP) return true;
-
-  if (choice === ARCHIVE) tryArchive(ctx, memoryDir, relPath, log);
-  else {
-    fs.unlinkSync(path.join(memoryDir, relPath));
-    log.push(`deleted ${relPath}`);
-  }
-  return true;
-}
-
-/**
- * Walk findings and ask what to do with each.
- *
- * Without a UI this degrades to the plain report: a review that cannot ask is
- * still useful to read, and silently guessing at deletions would not be.
- */
-export async function runInteractiveReview(
+/** Build the same read-only report used by the model-callable scanner. */
+export async function runMemoryReviewReport(
   settings: MemoryMdSettings,
   ctx: ExtensionContext,
   options: { limit?: number } = {},
 ): Promise<string> {
   const memoryDir = getMemoryDir(settings, ctx.cwd);
-  const result = reviewMemories(memoryDir, options.limit === undefined ? {} : { limit: options.limit });
-  const report = formatReviewReport(result);
-
-  if (result.findings.length === 0) return report;
-  if (!ctx.hasUI) return `${report}\n\n_No interactive UI available, so nothing was changed._`;
-
-  const log: string[] = [];
-  let stopped = false;
-  for (const finding of result.findings) {
-    const proceed =
-      finding.kind === "duplicates"
-        ? await handleCluster(ctx, memoryDir, finding, log)
-        : finding.kind === "fragmentation"
-          ? ((await ctx.ui.select(`${finding.summary}\n${finding.detail}`, [SKIP, STOP])) ?? STOP) !== STOP
-          : await handleSingle(ctx, memoryDir, finding, log);
-    if (!proceed) {
-      stopped = true;
-      break;
-    }
-  }
-
-  if (log.length > 0) generateProjectsIndex(memoryDir);
-
-  const outcome =
-    log.length === 0
-      ? "No changes were made."
-      : `Applied ${log.length} change(s):\n${log.map((entry) => `- ${entry}`).join("\n")}`;
-  const tail = stopped ? "\n\n_Review stopped early._" : "";
-  const sync = log.length > 0 ? "\n\nRun `memory_sync push` to persist these changes." : "";
-  return `${report}\n\n## Result\n\n${outcome}${tail}${sync}`;
+  return formatReviewReport(reviewMemories(memoryDir, options.limit === undefined ? {} : { limit: options.limit }));
 }
 
 export function registerMemoryReview(pi: ExtensionAPI, settings: MemoryMdSettings): void {
@@ -529,16 +348,21 @@ export function registerMemoryReview(pi: ExtensionAPI, settings: MemoryMdSetting
     name: "memory_review",
     label: "Memory Review",
     description:
-      "Review memory for cleanup candidates (duplicates, expired, stale, fragmented) and interactively keep, archive, merge, or delete them. Never touches reference/.",
+      "Read-only scan for memory cleanup candidates. Returns evidence for the agent to inspect semantically before using memory_cleanup. Never reads reference/ or mutates files.",
     parameters: Type.Object({
-      limit: Type.Optional(Type.Number({ description: "Maximum findings to review (default 20)" })),
-      reportOnly: Type.Optional(
-        Type.Boolean({ description: "Only produce the report without asking the user anything" }),
-      ),
+      limit: Type.Optional(Type.Number({ description: "Maximum candidates to return (default 20)" })),
+      area: Type.Optional(Type.String({ description: "Restrict to a top-level area such as projects or system" })),
+      folder: Type.Optional(Type.String({ description: "Restrict to a folder such as projects/blueflow" })),
+      kind: Type.Optional(Type.Union([
+        Type.Literal("related"), Type.Literal("fragmentation"), Type.Literal("timeboxed"),
+        Type.Literal("volatile"), Type.Literal("stale"), Type.Literal("stub"),
+      ])),
+      includeDismissed: Type.Optional(Type.Boolean({ description: "Include previously dismissed unchanged candidates" })),
     }),
-
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const { limit, reportOnly = false } = params as { limit?: number; reportOnly?: boolean };
+      const { limit, area, folder, kind, includeDismissed } = params as {
+        limit?: number; area?: string; folder?: string; kind?: FindingKind; includeDismissed?: boolean;
+      };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
 
       if (!fs.existsSync(memoryDir)) {
@@ -548,21 +372,97 @@ export function registerMemoryReview(pi: ExtensionAPI, settings: MemoryMdSetting
         };
       }
 
-      if (reportOnly) {
-        const result = reviewMemories(memoryDir, limit === undefined ? {} : { limit });
-        return {
-          content: [{ type: "text", text: formatReviewReport(result) }],
-          details: { findings: result.totalFindings, interactive: false },
-        };
-      }
-
-      const text = await runInteractiveReview(settings, ctx, limit === undefined ? {} : { limit });
-      return { content: [{ type: "text", text }], details: { interactive: ctx.hasUI } };
+      const result = reviewMemories(memoryDir, { limit, area, folder, kind, includeDismissed });
+      const structuredContent = {
+        noteCount: result.noteCount,
+        totalFindings: result.totalFindings,
+        findings: result.findings.map(({ id, fingerprint, dismissed, kind, severity, paths, summary, detail, evidence }) =>
+          ({ id, fingerprint, dismissed, kind, severity, paths, summary, detail, evidence })),
+      };
+      return {
+        content: [{ type: "text", text: `${formatReviewReport(result)}\n\n## Structured candidates\n\n\`\`\`json\n${JSON.stringify(structuredContent, null, 2)}\n\`\`\`` }],
+        details: { ...structuredContent, readOnly: true },
+      };
     },
 
     renderCall: (args, theme) => new Text(buildToolCallText("memory_review", args, theme), 0, 0),
     renderResult: (result, options, theme) =>
       renderCollapsed("Memory review", getResultText(result), options, theme),
+  });
+}
+
+export function registerMemoryCleanup(pi: ExtensionAPI, settings: MemoryMdSettings): void {
+  pi.registerTool({
+    name: "memory_cleanup",
+    label: "Memory Cleanup",
+    description: "Apply an explicit reviewed cleanup operation. Archive is reversible; dismiss suppresses an unchanged candidate. System or bulk archives require approval. reference/ is always prohibited.",
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal("archive"), Type.Literal("dismiss")]),
+      paths: Type.Optional(Type.Array(Type.String(), { description: "Relative note paths to archive" })),
+      candidateId: Type.Optional(Type.String({ description: "Candidate ID to dismiss" })),
+      fingerprint: Type.Optional(Type.String({ description: "Candidate fingerprint to dismiss" })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const input = params as { action: "archive" | "dismiss"; paths?: string[]; candidateId?: string; fingerprint?: string };
+      const memoryDir = getMemoryDir(settings, ctx.cwd);
+      const result = (success: boolean, changedPaths: string[], message: string) => ({
+        content: [{ type: "text" as const, text: message }],
+        details: { success, action: input.action, changedPaths, message },
+        ...(success ? {} : { isError: true }),
+      });
+
+      if (input.action === "dismiss") {
+        if (!input.candidateId || !input.fingerprint) return result(false, [], "candidateId and fingerprint are required");
+        const candidate = reviewMemories(memoryDir, { includeDismissed: true, limit: Number.MAX_SAFE_INTEGER }).findings
+          .find((item) => item.id === input.candidateId && item.fingerprint === input.fingerprint);
+        if (!candidate) return result(false, [], "Candidate is missing or changed; run memory_review again");
+        dismissReviewCandidate(memoryDir, input.candidateId, input.fingerprint);
+        return result(true, [], `Dismissed ${input.candidateId} until its notes change`);
+      }
+
+      const paths = [...new Set(input.paths ?? [])];
+      if (paths.length === 0) return result(false, [], "At least one path is required");
+
+      const destinations: string[] = [];
+      for (const relPath of paths) {
+        const fullPath = resolvePathWithin(memoryDir, relPath);
+        if (!fullPath) return result(false, [], `Path escapes memory directory: ${relPath}`);
+        const guard = assertWritable(memoryDir, fullPath);
+        if (guard) return result(false, [], guard);
+        if (relPath.split(/[\\/]/)[0] === ARCHIVE_AREA) return result(false, [], `${relPath} is already archived`);
+        if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile() || !fullPath.endsWith(".md")) {
+          return result(false, [], `Memory markdown file not found: ${relPath}`);
+        }
+        const destination = path.join(memoryDir, ARCHIVE_AREA, relPath);
+        if (fs.existsSync(destination)) return result(false, [], `Archive destination already exists: ${path.relative(memoryDir, destination)}`);
+        destinations.push(destination);
+      }
+
+      const dangerous = paths.length > 5 || paths.some((relPath) => relPath.split(/[\\/]/)[0] === "system");
+      if (dangerous) {
+        if (!ctx.hasUI) return result(false, [], "Approval required for system or bulk archive, but no interactive UI is available");
+        const approved = await ctx.ui.confirm("Approve dangerous memory cleanup", `Archive ${paths.length} note(s)?\n${paths.join("\n")}`);
+        if (!approved) return result(false, [], "Cleanup was not approved");
+      }
+
+      const moved: Array<{ from: string; to: string }> = [];
+      try {
+        paths.forEach((relPath, index) => {
+          const from = path.join(memoryDir, relPath);
+          const to = destinations[index]!;
+          fs.mkdirSync(path.dirname(to), { recursive: true });
+          fs.renameSync(from, to);
+          moved.push({ from, to });
+        });
+      } catch (error) {
+        for (const move of moved.reverse()) fs.renameSync(move.to, move.from);
+        return result(false, [], `Archive failed without partial changes: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      if (paths.some((relPath) => relPath.split(/[\\/]/)[0] === "projects")) generateProjectsIndex(memoryDir);
+      const changedPaths = paths.flatMap((relPath) => [relPath, path.join(ARCHIVE_AREA, relPath)]);
+      return result(true, changedPaths, `Archived ${paths.length} note(s)`);
+    },
   });
 }
 
@@ -680,6 +580,13 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
       }
 
       const existing = readMemoryFile(fullPath);
+      if (relPath.split(/[\\/]/)[0] === "system") {
+        if (!ctx.hasUI) {
+          return { content: [{ type: "text", text: "Approval required to modify system memory" }], details: { error: true, approvalRequired: true } };
+        }
+        const approved = await ctx.ui.confirm("Approve system memory change", `${mode} ${relPath}?`);
+        if (!approved) return { content: [{ type: "text", text: "System memory change was not approved" }], details: { error: true, approvalRequired: true } };
+      }
 
       const frontmatter: MemoryFrontmatter = {
         ...existing?.frontmatter,
@@ -720,7 +627,7 @@ export function registerMemoryDelete(pi: ExtensionAPI, settings: MemoryMdSetting
   pi.registerTool({
     name: "memory_delete",
     label: "Memory Delete",
-    description: "Delete a memory file by path",
+    description: "Permanently delete a memory file by path. Always requires user approval.",
     parameters: Type.Object({
       path: Type.String({ description: "Relative path to memory file to delete" }),
     }),
@@ -758,6 +665,12 @@ export function registerMemoryDelete(pi: ExtensionAPI, settings: MemoryMdSetting
           details: { error: true },
         };
       }
+
+      if (!ctx.hasUI) {
+        return { content: [{ type: "text", text: "Approval required to permanently delete memory" }], details: { error: true, approvalRequired: true } };
+      }
+      const approved = await ctx.ui.confirm("Permanently delete memory?", relPath);
+      if (!approved) return { content: [{ type: "text", text: "Memory deletion was not approved" }], details: { error: true, approvalRequired: true } };
 
       fs.unlinkSync(fullPath);
       const indexResult = relPath.startsWith("projects/") && path.basename(relPath).toLocaleLowerCase() !== "index.md"
@@ -1153,6 +1066,7 @@ export function registerAllMemoryTools(
   registerMemoryList(pi, settings);
   registerMemorySearch(pi, settings);
   registerMemoryReview(pi, settings);
+  registerMemoryCleanup(pi, settings);
   registerMemoryIndex(pi, settings);
   registerMemoryInit(pi, settings, isRepoInitialized);
   registerMemoryCheck(pi, settings);

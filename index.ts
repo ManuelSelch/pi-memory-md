@@ -12,7 +12,7 @@ import {
   type MemoryMdSettings,
   syncRepository,
 } from "./memoryMdCore.js";
-import { registerAllMemoryTools, runInteractiveReview } from "./tools.js";
+import { registerAllMemoryTools, runMemoryReviewReport } from "./tools.js";
 
 /**
  * Main extension initialization.
@@ -181,7 +181,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     handler: async (args, ctx) => {
       const parsed = Number.parseInt(args.trim(), 10);
       const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-      const text = await runInteractiveReview(settings, ctx, limit === undefined ? {} : { limit });
+      const text = await runMemoryReviewReport(settings, ctx, limit === undefined ? {} : { limit });
       pi.sendMessage({ customType: "pi-memory-md-review", content: text, display: true });
     },
   };

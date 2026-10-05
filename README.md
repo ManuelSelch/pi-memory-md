@@ -61,7 +61,7 @@ Use `/memory` with a subcommand. Tab completion suggests subcommands and `contex
 | `/memory refresh` | Refresh memory context from files (rebuild cache and inject into current session) |
 | `/memory check` | Show memory folder summary |
 | `/memory context [summary\|exact]` | Preview memory context |
-| `/memory review [limit]` | Review cleanup candidates interactively |
+| `/memory review [limit]` | Show read-only cleanup candidates for agent review |
 
 ## Available Tools
 
@@ -74,7 +74,10 @@ The LLM can use these tools to interact with memory:
 | `memory_init` | `{force?: boolean}` | Initialize or reinitialize repository |
 | `memory_sync` | `{action: "pull" / "push" / "status"}` | Git operations |
 | `memory_read` | `{path: string}` | Read a memory file |
-| `memory_write` | `{path, content, description, tags?}` | Create/update memory file |
+| `memory_write` | `{path, content, description, tags?}` | Create/update memory; system changes require approval |
+| `memory_delete` | `{path}` | Permanently delete memory with explicit approval |
+| `memory_review` | `{limit?, area?, folder?, kind?, includeDismissed?}` | Read-only candidate scan with structured evidence |
+| `memory_cleanup` | `{action: "archive" / "dismiss", ...}` | Apply guarded archive or dismissal operations |
 | `memory_list` | `{directory?: string}` | List all memory files |
 | `memory_search` | `{query?, grep?, rg?}` | Search by tags/description and custom grep/ripgrep patterns |
 | `memory_check` | `{}` | Check current project memory folder structure |

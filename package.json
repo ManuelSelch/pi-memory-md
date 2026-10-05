@@ -45,6 +45,7 @@
   "files": [
     "index.ts",
     "memoryMdCore.ts",
+    "memoryReview.ts",
     "tools.ts",
     "types.ts",
     "skills",
