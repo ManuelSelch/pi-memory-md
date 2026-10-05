@@ -43,8 +43,8 @@ describe("read-only areas", () => {
     expect(isReadOnlyMemoryPath(memoryDir, path.join(memoryDir, "reference/a/b.md"))).toBe(true);
   });
 
-  it("allows core/, projects/ and archive/", () => {
-    expect(assertWritable(memoryDir, path.join(memoryDir, "core/user/prefer.md"))).toBeNull();
+  it("allows system/, projects/ and archive/", () => {
+    expect(assertWritable(memoryDir, path.join(memoryDir, "system/preferences.md"))).toBeNull();
     expect(assertWritable(memoryDir, path.join(memoryDir, "projects/x/plan.md"))).toBeNull();
     expect(assertWritable(memoryDir, path.join(memoryDir, "archive/projects/x/old.md"))).toBeNull();
   });
@@ -52,23 +52,23 @@ describe("read-only areas", () => {
 
 describe("collectReviewNotes", () => {
   it("skips reference/ and generated indexes", () => {
-    write("core/user/prefer.md", { description: "Prefs", tags: ["user"] });
+    write("system/preferences.md", { description: "Prefs", tags: ["user"] });
     write("projects/a/plan.md", { description: "Plan", tags: ["a"] });
     write("projects/INDEX.md", { description: "Generated index", tags: ["index"] });
     write("reference/vault/note.md", { description: "Vault note", tags: ["vault"] });
 
     const paths = collectReviewNotes(memoryDir).map((note) => note.relPath);
-    expect(paths).toEqual(["core/user/prefer.md", "projects/a/plan.md"]);
+    expect(paths).toEqual(["projects/a/plan.md", "system/preferences.md"]);
   });
 
   // Regression: archived notes were re-reported, and the only offered action was
   // to archive them again, producing archive/archive/...
   it("skips archive/ so archived notes are never re-reported", () => {
-    write("core/user/prefer.md", { description: "Prefs", tags: ["user"] });
-    write("archive/core/tech/pricing.md", { description: "Pricing researched 2026-09", tags: ["llm"] });
+    write("system/preferences.md", { description: "Prefs", tags: ["user"] });
+    write("archive/long-term/tech/pricing.md", { description: "Pricing researched 2026-09", tags: ["llm"] });
 
     const paths = collectReviewNotes(memoryDir).map((note) => note.relPath);
-    expect(paths).toEqual(["core/user/prefer.md"]);
+    expect(paths).toEqual(["system/preferences.md"]);
 
     const result = reviewMemories(memoryDir);
     expect(result.findings.every((finding) => finding.paths.every((p) => !p.startsWith("archive/")))).toBe(true);
@@ -167,30 +167,30 @@ describe("findDuplicateClusters", () => {
 });
 
 describe("content rules", () => {
-  it("flags time-boxed notes and raises severity inside core", () => {
-    write("core/user/klausurplan.md", { description: "Lernplan, Klausur in drei Wochen", tags: ["study"] });
+  it("flags time-boxed notes and raises severity inside system", () => {
+    write("system/klausurplan.md", { description: "Lernplan, Klausur in drei Wochen", tags: ["study"] });
     write("projects/a/sprint.md", { description: "Sprint planning for the next sprint", tags: ["plan"] });
     write("projects/a/durable.md", { description: "Stable architecture decision", tags: ["arch"] });
 
     const findings = findTimeboxed(collectReviewNotes(memoryDir));
     const paths = findings.map((finding) => finding.paths[0]);
-    expect(paths).toContain("core/user/klausurplan.md");
+    expect(paths).toContain("system/klausurplan.md");
     expect(paths).not.toContain("projects/a/durable.md");
 
-    const core = findings.find((finding) => finding.paths[0] === "core/user/klausurplan.md")!;
+    const system = findings.find((finding) => finding.paths[0] === "system/klausurplan.md")!;
     const project = findings.find((finding) => finding.paths[0] === "projects/a/sprint.md")!;
-    expect(core.severity).toBeGreaterThan(project.severity);
-    expect(core.detail).toContain("always-injected core");
+    expect(system.severity).toBeGreaterThan(project.severity);
+    expect(system.detail).toContain("always-loaded system memory");
   });
 
   it("flags volatile facts", () => {
-    write("core/tech/pricing.md", { description: "Verified LLM subscription pricing (researched 2026-09)", tags: ["llm"] });
-    write("core/user/profile.md", { description: "Profile with 40 followers and 54 repos", tags: ["user"] });
+    write("long-term/tech/pricing.md", { description: "Verified LLM subscription pricing (researched 2026-09)", tags: ["llm"] });
+    write("long-term/user/profile.md", { description: "Profile with 40 followers and 54 repos", tags: ["user"] });
     write("projects/a/stable.md", { description: "How the parser handles nested loops", tags: ["parser"] });
 
     const paths = findVolatile(collectReviewNotes(memoryDir)).map((finding) => finding.paths[0]);
-    expect(paths).toContain("core/tech/pricing.md");
-    expect(paths).toContain("core/user/profile.md");
+    expect(paths).toContain("long-term/tech/pricing.md");
+    expect(paths).toContain("long-term/user/profile.md");
     expect(paths).not.toContain("projects/a/stable.md");
   });
 
@@ -254,7 +254,7 @@ describe("reviewMemories", () => {
     for (let i = 0; i < 25; i++) {
       write(`reference/vault/note-${i}.md`, { description: `Klausur in drei Wochen ${i}`, tags: ["vault"] });
     }
-    write("core/user/klausurplan.md", { description: "Klausur in drei Wochen", tags: ["study"] });
+    write("system/klausurplan.md", { description: "Klausur in drei Wochen", tags: ["study"] });
 
     const result = reviewMemories(memoryDir, { limit: 5 });
     expect(result.findings.length).toBeLessThanOrEqual(5);
@@ -263,7 +263,7 @@ describe("reviewMemories", () => {
   });
 
   it("reports a clean corpus without findings", () => {
-    write("core/user/prefer.md", { description: "Stable preferences", tags: ["user"] });
+    write("system/preferences.md", { description: "Stable preferences", tags: ["user"] });
     const result = reviewMemories(memoryDir);
     expect(result.findings).toHaveLength(0);
     expect(formatReviewReport(result)).toContain("No cleanup candidates");

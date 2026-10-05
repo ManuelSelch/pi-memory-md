@@ -53,7 +53,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     if (!settings.enabled) return false;
 
     const memoryDir = getMemoryDir(settings, ctx.cwd);
-    const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core"));
+    const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "projects")) || fs.existsSync(path.join(memoryDir, "long-term"));
 
     if (!hasTieredMemory) {
       if (options.showNotification) {
@@ -122,7 +122,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       const projectName = path.basename(ctx.cwd);
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core", "user"));
+      const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "projects")) || fs.existsSync(path.join(memoryDir, "long-term"));
 
       if (!hasTieredMemory) {
         ctx.ui.notify(`Memory: ${projectName} | Not initialized | Use /memory-init to set up`, "info");
@@ -143,7 +143,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     description: "Initialize memory repository",
     handler: async (_args, ctx) => {
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core", "user"));
+      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "projects")) || fs.existsSync(path.join(memoryDir, "long-term"));
 
       const result = await syncRepository(pi, settings, repoInitialized);
 
@@ -159,7 +159,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(`Memory already exists: ${result.message}`, "info");
       } else {
         ctx.ui.notify(
-          `Memory initialized: ${result.message}\n\nCreated:\n  - system\n  - projects\n  - long-term/user\n  - long-term/tech\n  - reference\n  - core/user (legacy)`,
+          `Memory initialized: ${result.message}\n\nCreated:\n  - system\n  - projects\n  - long-term/user\n  - long-term/tech\n  - reference`,
           "info",
         );
       }

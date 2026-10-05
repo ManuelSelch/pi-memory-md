@@ -275,9 +275,6 @@ function ensureDirectoryStructure(memoryDir: string): void {
     path.join(memoryDir, "long-term", "user"),
     path.join(memoryDir, "long-term", "tech"),
     path.join(memoryDir, "reference"),
-    // Legacy layout kept for backward compatibility during migration.
-    path.join(memoryDir, "core", "user"),
-    path.join(memoryDir, "core", "project"),
   ];
 
   for (const dir of dirs) {
@@ -366,9 +363,8 @@ function appendIndexEntry(entries: string[], memoryDir: string, filePath: string
 /**
  * Build tiered memory context.
  *
- * system/ files are injected in full and should stay small. Legacy core/ files
- * and other durable areas are exposed as an index so the agent can read details
- * on demand via memory_read.
+ * system/ files are injected in full and should stay small. Other durable areas
+ * are exposed as an index so the agent can read details on demand via memory_read.
  */
 export function buildMemoryContext(settings: MemoryMdSettings, cwd: string): string {
   return buildMemoryContextParts(settings, cwd).context;
@@ -377,25 +373,24 @@ export function buildMemoryContext(settings: MemoryMdSettings, cwd: string): str
 function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   context: string;
   memoryDir: string;
-  coreFileCount: number;
-  injectedCoreEntries: number;
-  omittedCoreEntries: number;
+  systemFileCount: number;
+  injectedIndexEntries: number;
+  omittedIndexEntries: number;
   externalAreas: string[];
   budgetTokens: number;
   estimatedTokens: number;
 } {
   const memoryDir = getMemoryDir(settings, cwd);
   const systemDir = path.join(memoryDir, "system");
-  const legacyCoreDir = path.join(memoryDir, "core");
   const budgetTokens = settings.systemPrompt?.maxTokens ?? DEFAULT_MAX_TOKENS;
 
   if (!fs.existsSync(memoryDir)) {
     return {
       context: "",
       memoryDir,
-      coreFileCount: 0,
-      injectedCoreEntries: 0,
-      omittedCoreEntries: 0,
+      systemFileCount: 0,
+      injectedIndexEntries: 0,
+      omittedIndexEntries: 0,
       externalAreas: [],
       budgetTokens,
       estimatedTokens: 0,
@@ -403,8 +398,7 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   }
 
   const systemFiles = fs.existsSync(systemDir) ? listMemoryFiles(systemDir) : [];
-  const legacyCoreFiles = fs.existsSync(legacyCoreDir) ? listMemoryFiles(legacyCoreDir) : [];
-  const indexRoots = ["long-term", "projects", "core"]
+  const indexRoots = ["long-term", "projects"]
     .map((name) => path.join(memoryDir, name))
     .filter((dir) => fs.existsSync(dir));
   const indexFiles = [...new Set(indexRoots.flatMap((dir) => listMemoryFiles(dir)))];
@@ -413,9 +407,9 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
     return {
       context: "",
       memoryDir,
-      coreFileCount: 0,
-      injectedCoreEntries: 0,
-      omittedCoreEntries: 0,
+      systemFileCount: 0,
+      injectedIndexEntries: 0,
+      omittedIndexEntries: 0,
       externalAreas: [],
       budgetTokens,
       estimatedTokens: 0,
@@ -480,9 +474,9 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   return {
     context,
     memoryDir,
-    coreFileCount: legacyCoreFiles.length + systemFiles.length,
-    injectedCoreEntries: entries.length + systemFiles.length,
-    omittedCoreEntries: omitted,
+    systemFileCount: systemFiles.length,
+    injectedIndexEntries: entries.length + systemFiles.length,
+    omittedIndexEntries: omitted,
     externalAreas: external,
     budgetTokens,
     estimatedTokens: Math.ceil(context.length / CHARS_PER_TOKEN),
@@ -520,9 +514,9 @@ export function buildMemoryContextPreview(
     "",
     "## Injected memory",
     "",
-    `- System + legacy core markdown files: **${parts.coreFileCount}**`,
-    `- Injected full bodies/index entries: **${parts.injectedCoreEntries}**`,
-    `- Omitted by budget: **${parts.omittedCoreEntries}**`,
+    `- System markdown files: **${parts.systemFileCount}**`,
+    `- Injected full bodies/index entries: **${parts.injectedIndexEntries}**`,
+    `- Omitted by budget: **${parts.omittedIndexEntries}**`,
     "- `system/` file bodies are injected in full; indexed memory needs `memory_read` for details.",
     "",
     "## External memory shown in context",

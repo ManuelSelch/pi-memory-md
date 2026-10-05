@@ -39,7 +39,7 @@ function legacyNote(relPath: string): string {
 }
 
 it("accepts legacy metadata without validating its policy values", () => {
-  const memory = readMemoryFile(legacyNote("core/legacy.md"));
+  const memory = readMemoryFile(legacyNote("long-term/legacy.md"));
   expect(memory?.frontmatter.description).toBe("Legacy note");
   expect(memory?.frontmatter.tags).toEqual(["legacy"]);
   expect(memory?.content.trim()).toBe("# Legacy body");
@@ -57,11 +57,11 @@ it("loads memory by folder regardless of legacy metadata", () => {
 });
 
 it.each(["overwrite", "append"] as const)("preserves legacy metadata when updating via %s", async (mode) => {
-  const fullPath = legacyNote("core/legacy.md");
+  const fullPath = legacyNote("long-term/legacy.md");
   let tool: any;
   registerMemoryWrite({ registerTool: (definition: unknown) => { tool = definition; } } as any, { localPath: memoryDir });
   await tool.execute("test", {
-    path: "core/legacy.md", content: "Updated body", description: "Updated description", mode,
+    path: "long-term/legacy.md", content: "Updated body", description: "Updated description", mode,
   }, undefined, undefined, { cwd: "/project" });
   expect(readMemoryFile(fullPath)?.frontmatter).toMatchObject({
     description: "Updated description",
@@ -75,6 +75,7 @@ it("omits removed properties from new default notes", () => {
   createDefaultFiles(memoryDir);
   const files = listMemoryFiles(memoryDir);
   expect(files).toHaveLength(3);
+  expect(fs.existsSync(path.join(memoryDir, "core"))).toBe(false);
   for (const file of files) {
     const metadata = readMemoryFile(file)?.frontmatter;
     for (const field of ["scope", "load", "project", "status"]) {

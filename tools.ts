@@ -230,10 +230,8 @@ export function registerMemorySync(
       const { action } = params as { action: "pull" | "push" | "status" };
       const localPath = settings.localPath!;
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const coreUserDir = path.join(memoryDir, "core", "user");
-
       if (action === "status") {
-        const initialized = fs.existsSync(coreUserDir) && fs.existsSync(path.join(localPath, ".git"));
+        const initialized = fs.existsSync(memoryDir) && fs.existsSync(path.join(localPath, ".git"));
         if (!initialized) {
           return {
             content: [{ type: "text", text: "Memory repository not initialized. Use memory_init to set up." }],
@@ -336,7 +334,7 @@ const STOP = "Stop review";
  * Move a note into archive/, preserving its path so its origin stays readable.
  *
  * Archiving an already-archived note is refused rather than nesting: doing so
- * once produced `archive/archive/core/tech/...`, which is nobody's intent.
+ * once produced `archive/archive/long-term/tech/...`, which is nobody's intent.
  */
 function archiveNote(memoryDir: string, relPath: string): string {
   const segments = relPath.split(path.sep);
@@ -601,7 +599,7 @@ export function registerMemoryRead(pi: ExtensionAPI, settings: MemoryMdSettings)
     label: "Memory Read",
     description: "Read a memory file by path",
     parameters: Type.Object({
-      path: Type.String({ description: "Relative path to memory file (e.g., 'core/user/identity.md')" }),
+      path: Type.String({ description: "Relative path to memory file (e.g., 'long-term/user/identity.md')" }),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -644,7 +642,7 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
     label: "Memory Write",
     description: "Create, update, or append to a memory file with YAML frontmatter",
     parameters: Type.Object({
-      path: Type.String({ description: "Relative path to memory file (e.g., 'core/user/identity.md')" }),
+      path: Type.String({ description: "Relative path to memory file (e.g., 'long-term/user/identity.md')" }),
       content: Type.String({ description: "Markdown content" }),
       description: Type.String({ description: "Description for frontmatter" }),
       tags: Type.Optional(Type.Array(Type.String())),
@@ -792,7 +790,7 @@ export function registerMemoryList(pi: ExtensionAPI, settings: MemoryMdSettings)
     label: "Memory List",
     description: "List all memory files in the repository",
     parameters: Type.Object({
-      directory: Type.Optional(Type.String({ description: "Filter by directory (e.g., 'core/user')" })),
+      directory: Type.Optional(Type.String({ description: "Filter by directory (e.g., 'long-term/user')" })),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1038,7 +1036,7 @@ export function registerMemoryInit(
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { force = false } = params as { force?: boolean };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
-      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "core", "user"));
+      const alreadyInitialized = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "projects")) || fs.existsSync(path.join(memoryDir, "long-term"));
 
       if (alreadyInitialized && !force) {
         return {
@@ -1062,7 +1060,7 @@ export function registerMemoryInit(
         content: [
           {
             type: "text",
-            text: `Memory repository initialized:\n${result.message}\n\nCreated directory structure:\n${["system", "projects", "long-term/user", "long-term/tech", "reference", "core/user (legacy)", "core/project (legacy)"].map((d) => `  - ${d}`).join("\n")}`,
+            text: `Memory repository initialized:\n${result.message}\n\nCreated directory structure:\n${["system", "projects", "long-term/user", "long-term/tech", "reference"].map((d) => `  - ${d}`).join("\n")}`,
           },
         ],
         details: { success: true },
@@ -1111,17 +1109,6 @@ export function registerMemoryCheck(pi: ExtensionAPI, settings: MemoryMdSettings
           return { name: entry.name, count };
         });
 
-      const coreDirs = fs.existsSync(path.join(memoryDir, "core"))
-        ? fs
-            .readdirSync(path.join(memoryDir, "core"), { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => {
-              const dirPath = path.join(memoryDir, "core", entry.name);
-              const count = listMemoryFiles(dirPath).length;
-              return `  - core/${entry.name}/ (${count} files)`;
-            })
-        : [];
-
       const lines = [
         `Memory summary for project: ${path.basename(ctx.cwd)}`,
         `Path: ${memoryDir}`,
@@ -1130,10 +1117,6 @@ export function registerMemoryCheck(pi: ExtensionAPI, settings: MemoryMdSettings
         "Top-level areas:",
         ...topLevelDirs.map((dir) => `  - ${dir.name}/ (${dir.count} files)`),
       ];
-
-      if (coreDirs.length > 0) {
-        lines.push("", "Core subdirectories:", ...coreDirs);
-      }
 
       lines.push("", "Use memory_list with a directory argument for detailed file names.");
 

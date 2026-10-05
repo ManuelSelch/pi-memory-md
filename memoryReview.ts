@@ -11,7 +11,7 @@ import { isReadOnlyMemoryPath, listMemoryFiles, readMemoryFile } from "./memoryM
  * - Tag-set Jaccard on genuinely duplicated clusters measured 0.33-0.80, while
  *   unrelated control pairs measured 0.00-0.13, so 0.30 separates them.
  * - The time-boxed pattern was validated against a "Klausur in drei Wochen"
- *   study plan that had been sitting in always-injected core for months.
+ *   study plan that had been sitting in always-loaded system memory for months.
  *
  * Nothing in this module mutates the corpus; it only reports. Deletion stays a
  * separate, explicit step so a false positive can never destroy a memory.
@@ -312,10 +312,10 @@ function matchRule(notes: readonly ReviewNote[], pattern: RegExp, kind: FindingK
     .filter((note) => pattern.test(note.description) || pattern.test(note.title))
     .map((note) => ({
       kind,
-      severity: note.area === "core" ? severity + 20 : severity,
+      severity: note.area === "system" ? severity + 20 : severity,
       paths: [note.relPath],
       summary: `${note.relPath} — ${note.description || note.title}`,
-      detail: advice + (note.area === "core" ? "\nThis note sits in always-injected core, so the cost is paid every session." : ""),
+      detail: advice + (note.area === "system" ? "\nThis note sits in always-loaded system memory, so the cost is paid every session." : ""),
     }));
 }
 
