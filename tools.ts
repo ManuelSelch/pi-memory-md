@@ -395,21 +395,47 @@ export function registerMemoryCleanup(pi: ExtensionAPI, settings: MemoryMdSettin
   pi.registerTool({
     name: "memory_cleanup",
     label: "Memory Cleanup",
-    description: "Apply an explicit reviewed cleanup operation. Archive is reversible; dismiss suppresses an unchanged candidate. System or bulk archives require approval. reference/ is always prohibited.",
+    description: "Apply an explicit reviewed cleanup operation. Supports reversible archives, information-preserving merges, updates, deletion, and dismissals. System changes, collisions, and deletion require approval; reference/ is always prohibited.",
     parameters: Type.Object({
-      action: Type.Union([Type.Literal("archive"), Type.Literal("dismiss")]),
-      paths: Type.Optional(Type.Array(Type.String(), { description: "Relative note paths to archive" })),
+      action: Type.Union([
+        Type.Literal("archive"), Type.Literal("merge"), Type.Literal("update"),
+        Type.Literal("delete"), Type.Literal("dismiss"),
+      ]),
+      paths: Type.Optional(Type.Array(Type.String(), { description: "Source or target relative note paths" })),
+      targetPath: Type.Optional(Type.String({ description: "Destination path for merge or update" })),
+      content: Type.Optional(Type.String({ description: "Complete Markdown body for merge or update" })),
+      description: Type.Optional(Type.String({ description: "Description for merge or update frontmatter" })),
+      tags: Type.Optional(Type.Array(Type.String())),
       candidateId: Type.Optional(Type.String({ description: "Candidate ID to dismiss" })),
       fingerprint: Type.Optional(Type.String({ description: "Candidate fingerprint to dismiss" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const input = params as { action: "archive" | "dismiss"; paths?: string[]; candidateId?: string; fingerprint?: string };
+      const input = params as {
+        action: "archive" | "merge" | "update" | "delete" | "dismiss";
+        paths?: string[]; targetPath?: string; content?: string; description?: string; tags?: string[];
+        candidateId?: string; fingerprint?: string;
+      };
       const memoryDir = getMemoryDir(settings, ctx.cwd);
       const result = (success: boolean, changedPaths: string[], message: string) => ({
         content: [{ type: "text" as const, text: message }],
         details: { success, action: input.action, changedPaths, message },
         ...(success ? {} : { isError: true }),
       });
+
+      const confirm = async (title: string, message: string): Promise<boolean> => {
+        if (!ctx.hasUI) return false;
+        return ctx.ui.confirm(title, message);
+      };
+      const validateMarkdownPath = (relPath: string, mustExist: boolean): string | null => {
+        const fullPath = resolvePathWithin(memoryDir, relPath);
+        if (!fullPath) return `Path escapes memory directory: ${relPath}`;
+        const guard = assertWritable(memoryDir, fullPath);
+        if (guard) return guard;
+        if (!fullPath.endsWith(".md")) return `Only Markdown files may be changed: ${relPath}`;
+        if (mustExist && (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile())) return `Memory file not found: ${relPath}`;
+        return null;
+      };
+      const notePath = input.targetPath ?? input.paths?.[0];
 
       if (input.action === "dismiss") {
         if (!input.candidateId || !input.fingerprint) return result(false, [], "candidateId and fingerprint are required");
@@ -418,6 +444,86 @@ export function registerMemoryCleanup(pi: ExtensionAPI, settings: MemoryMdSettin
         if (!candidate) return result(false, [], "Candidate is missing or changed; run memory_review again");
         dismissReviewCandidate(memoryDir, input.candidateId, input.fingerprint);
         return result(true, [], `Dismissed ${input.candidateId} until its notes change`);
+      }
+
+      if (input.action === "update") {
+        if (!notePath || input.content === undefined) return result(false, [], "update requires targetPath and content");
+        const guard = validateMarkdownPath(notePath, true);
+        if (guard) return result(false, [], guard);
+        const current = readMemoryFile(path.join(memoryDir, notePath));
+        const systemChange = notePath.split(/[\\/]/)[0] === "system";
+        if (systemChange || current?.content !== input.content) {
+          const approved = await confirm("Approve memory update", `Overwrite ${notePath}?`);
+          if (!approved) return result(false, [], "Memory update was not approved");
+        }
+        const frontmatter = {
+          ...current?.frontmatter,
+          description: input.description ?? current?.frontmatter.description ?? "Updated memory",
+          ...(input.tags !== undefined ? { tags: input.tags } : {}),
+          created: current?.frontmatter.created ?? getCurrentDate(),
+          updated: getCurrentDate(),
+        };
+        writeMemoryFile(path.join(memoryDir, notePath), input.content, frontmatter);
+        if (notePath.startsWith("projects/") && path.basename(notePath).toLocaleLowerCase() !== "index.md") generateProjectsIndex(memoryDir);
+        return result(true, [notePath], `Updated ${notePath}`);
+      }
+
+      if (input.action === "delete") {
+        const paths = [...new Set(input.paths ?? (notePath ? [notePath] : []))];
+        if (paths.length === 0) return result(false, [], "delete requires paths");
+        for (const relPath of paths) {
+          const guard = validateMarkdownPath(relPath, true);
+          if (guard) return result(false, [], guard);
+        }
+        const approved = await confirm("Permanently delete memory?", paths.join("\\n"));
+        if (!approved) return result(false, [], "Deletion requires explicit approval");
+        const backups = paths.map((relPath) => ({ relPath, content: fs.readFileSync(path.join(memoryDir, relPath)) }));
+        try {
+          for (const item of backups) fs.unlinkSync(path.join(memoryDir, item.relPath));
+        } catch (error) {
+          for (const item of backups) if (!fs.existsSync(path.join(memoryDir, item.relPath))) fs.writeFileSync(path.join(memoryDir, item.relPath), item.content);
+          return result(false, [], `Delete failed without partial changes: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (paths.some((relPath) => relPath.startsWith("projects/"))) generateProjectsIndex(memoryDir);
+        return result(true, paths, `Deleted ${paths.length} note(s)`);
+      }
+
+      if (input.action === "merge") {
+        const paths = [...new Set(input.paths ?? [])];
+        if (paths.length < 2 || !notePath || input.content === undefined || input.description === undefined) {
+          return result(false, [], "merge requires at least two source paths, targetPath, content, and description");
+        }
+        for (const relPath of paths) {
+          const guard = validateMarkdownPath(relPath, true);
+          if (guard) return result(false, [], guard);
+        }
+        if (paths.includes(notePath)) return result(false, [], "merge target must be a new path; source notes are archived for recovery");
+        const targetGuard = validateMarkdownPath(notePath, false);
+        if (targetGuard) return result(false, [], targetGuard);
+        if (fs.existsSync(path.join(memoryDir, notePath))) return result(false, [], `Merge target already exists: ${notePath}`);
+        const dangerous = paths.length > 5 || paths.some((relPath) => relPath.split(/[\\/]/)[0] === "system") || notePath.split(/[\\/]/)[0] === "system";
+        if (dangerous && !(await confirm("Approve dangerous memory merge", `Merge and archive ${paths.length} notes?\n${paths.join("\\n")}`))) {
+          return result(false, [], "Merge was not approved");
+        }
+        const targetFull = path.join(memoryDir, notePath);
+        const moved: Array<{ from: string; to: string }> = [];
+        try {
+          writeMemoryFile(targetFull, input.content, { description: input.description, tags: input.tags ?? [], created: getCurrentDate(), updated: getCurrentDate() });
+          for (const relPath of paths) {
+            const from = path.join(memoryDir, relPath);
+            const to = path.join(memoryDir, ARCHIVE_AREA, relPath);
+            if (fs.existsSync(to)) throw new Error(`Archive destination already exists: ${path.relative(memoryDir, to)}`);
+            fs.mkdirSync(path.dirname(to), { recursive: true });
+            fs.renameSync(from, to);
+            moved.push({ from, to });
+          }
+        } catch (error) {
+          for (const move of moved.reverse()) fs.renameSync(move.to, move.from);
+          if (fs.existsSync(targetFull)) fs.unlinkSync(targetFull);
+          return result(false, [], `Merge failed without partial changes: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        if (paths.some((relPath) => relPath.startsWith("projects/")) || notePath.startsWith("projects/")) generateProjectsIndex(memoryDir);
+        return result(true, [notePath, ...paths.flatMap((relPath) => [relPath, path.join(ARCHIVE_AREA, relPath)])], `Merged ${paths.length} notes into ${notePath}; sources archived`);
       }
 
       const paths = [...new Set(input.paths ?? [])];

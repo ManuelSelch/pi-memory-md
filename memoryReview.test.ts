@@ -289,6 +289,38 @@ describe("memory_cleanup", () => {
     expect(approved.details.success).toBe(true);
   });
 
+  it("merges notes while preserving source copies in archive", async () => {
+    write("projects/a/one.md", { description: "One", tags: ["one"], body: "# One\n\nFirst" });
+    write("projects/a/two.md", { description: "Two", tags: ["two"], body: "# Two\n\nSecond" });
+    const result = await execute(cleanupTool(), {
+      action: "merge", paths: ["projects/a/one.md", "projects/a/two.md"], targetPath: "projects/a/merged.md",
+      content: "# Merged\n\nFirst and second", description: "Merged notes", tags: ["merged"],
+    });
+    expect(result.details.success).toBe(true);
+    expect(fs.readFileSync(path.join(memoryDir, "projects/a/merged.md"), "utf8")).toContain("First and second");
+    expect(fs.existsSync(path.join(memoryDir, "archive/projects/a/one.md"))).toBe(true);
+    expect(fs.existsSync(path.join(memoryDir, "archive/projects/a/two.md"))).toBe(true);
+  });
+
+  it("requires approval for an update that overwrites content", async () => {
+    write("projects/a/note.md", { description: "Note", body: "# Original" });
+    const denied = await execute(cleanupTool(), { action: "update", targetPath: "projects/a/note.md", content: "# Changed" });
+    expect(denied.details.success).toBe(false);
+    expect(fs.readFileSync(path.join(memoryDir, "projects/a/note.md"), "utf8")).toContain("Original");
+    const approved = await execute(cleanupTool(), { action: "update", targetPath: "projects/a/note.md", content: "# Changed" }, {
+      hasUI: true, ui: { confirm: async () => true },
+    });
+    expect(approved.details.success).toBe(true);
+    expect(fs.readFileSync(path.join(memoryDir, "projects/a/note.md"), "utf8")).toContain("Changed");
+  });
+
+  it("requires approval before delete", async () => {
+    write("projects/a/note.md", { description: "Note" });
+    const result = await execute(cleanupTool(), { action: "delete", paths: ["projects/a/note.md"] });
+    expect(result.details.success).toBe(false);
+    expect(fs.existsSync(path.join(memoryDir, "projects/a/note.md"))).toBe(true);
+  });
+
   it("dismisses a candidate without changing notes", async () => {
     write("projects/a/one.md", { description: "One", tags: ["x", "y"] });
     write("projects/a/two.md", { description: "Two", tags: ["x", "y"] });
