@@ -248,7 +248,11 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       const candidates = contextMatch ? ["summary", "exact"] : Object.keys(commands);
       const currentPrefix = contextMatch?.[1] ?? prefix;
       const matches = candidates.filter((value) => value.startsWith(currentPrefix));
-      return matches.length ? matches.map((value) => ({ value, label: value })) : null;
+      // Pi replaces the entire argument prefix, not just the current word.
+      return matches.length ? matches.map((value) => ({
+        value: contextMatch ? `context ${value}` : value,
+        label: value,
+      })) : null;
     },
     handler: async (args, ctx) => {
       const [subcommand, ...rest] = args.trim().split(/\s+/);

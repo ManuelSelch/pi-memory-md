@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
 
 vi.mock("node:fs", () => ({ default: { existsSync: () => true } }));
 vi.mock("./memoryMdCore.js", () => ({
@@ -45,10 +46,26 @@ it("completes memory subcommands and context modes", () => {
     .toEqual(["check", "context", "init", "refresh", "review", "status"]);
   expect(command.getArgumentCompletions("re").map((item: any) => item.value))
     .toEqual(["review", "refresh"]);
-  expect(command.getArgumentCompletions("context e")).toEqual([{ value: "exact", label: "exact" }]);
+  expect(command.getArgumentCompletions("context e")).toEqual([{ value: "context exact", label: "exact" }]);
   expect(command.getArgumentCompletions("context ").map((item: any) => item.value))
-    .toEqual(["summary", "exact"]);
+    .toEqual(["context summary", "context exact"]);
   expect(command.getArgumentCompletions("invalid")).toBeNull();
+});
+
+it.each([
+  ["/memory context e", "exact", "/memory context exact"],
+  ["/memory context ", "summary", "/memory context summary"],
+  ["/memory re", "review", "/memory review"],
+])("applies native Pi completion to %s", async (input, label, expected) => {
+  const command = memoryCommand();
+  const provider = new CombinedAutocompleteProvider([{ name: "memory", ...command }]);
+  const suggestions = await provider.getSuggestions([input], 0, input.length, { signal: new AbortController().signal });
+  expect(suggestions).not.toBeNull();
+  const item = suggestions!.items.find((candidate) => candidate.label === label)!;
+  expect(item).toBeDefined();
+  const result = provider.applyCompletion([input + " suffix"], 0, input.length, item, suggestions!.prefix);
+  expect(result.lines).toEqual([expected + " suffix"]);
+  expect(result.cursorCol).toBe(expected.length);
 });
 
 it.each(["", "invalid", "toString"])("shows usage for %j without dispatching", async (args) => {
