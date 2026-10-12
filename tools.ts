@@ -13,6 +13,7 @@ import {
   getMemoryDir,
   gitExec,
   listMemoryFiles,
+  listReferenceFiles,
   readMemoryFile,
   syncRepository,
   writeMemoryFile,
@@ -894,7 +895,7 @@ export function registerMemorySearch(pi: ExtensionAPI, settings: MemoryMdSetting
         };
       }
 
-      const scored = listMemoryFiles(memoryDir)
+      const scored = [...new Set([...listMemoryFiles(memoryDir), ...listReferenceFiles(settings, memoryDir)])]
         .map((filePath) => {
           const memory = readMemoryFile(filePath);
           if (!memory) return null;

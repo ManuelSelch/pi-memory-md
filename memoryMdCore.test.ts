@@ -7,6 +7,7 @@ import {
   createDefaultFiles,
   ensureDirectoryStructure,
   listMemoryFiles,
+  listReferenceFiles,
   readMemoryFile,
 } from "./memoryMdCore.js";
 import { registerMemoryWrite } from "./tools.js";
@@ -52,8 +53,21 @@ it("loads memory by folder regardless of legacy metadata", () => {
   const context = buildMemoryContext({ localPath: memoryDir }, "/project");
   expect(context).toContain("## system/policy.md\n\n# Legacy body");
   expect(context).toContain("- projects/example/note.md — Legacy note [legacy]");
-  expect(context).not.toContain("- reference/note.md —");
+  expect(context).toContain("- reference/note.md — Legacy note [legacy]");
   expect(context.match(/# Legacy body/g)).toHaveLength(1);
+});
+
+it("includes configured external roots alongside reference/", () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), "obsidian-vault-"));
+  try {
+    const note = path.join(vault, "topic.md");
+    fs.writeFileSync(note, "---\ndescription: External note\ntags: [vault]\n---\n# External content");
+    const settings = { localPath: memoryDir, referencePaths: [vault] };
+    expect(listReferenceFiles(settings, memoryDir)).toContain(note);
+    expect(buildMemoryContext(settings, "/project")).toContain("External note [vault]");
+  } finally {
+    fs.rmSync(vault, { recursive: true, force: true });
+  }
 });
 
 it.each(["overwrite", "append"] as const)("preserves legacy metadata when updating via %s", async (mode) => {

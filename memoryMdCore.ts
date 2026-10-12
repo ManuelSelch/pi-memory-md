@@ -255,6 +255,12 @@ export function listMemoryFiles(memoryDir: string): string[] {
   return files;
 }
 
+/** Markdown files from built-in and explicitly configured external reference roots. */
+export function listReferenceFiles(settings: MemoryMdSettings, memoryDir: string): string[] {
+  const roots = [path.join(memoryDir, "reference"), ...(settings.referencePaths ?? []).map(expandPath)];
+  return [...new Set(roots.flatMap((root) => listMemoryFiles(root)))];
+}
+
 export function writeMemoryFile(filePath: string, content: string, frontmatter: MemoryFrontmatter): void {
   const fileDir = path.dirname(filePath);
   fs.mkdirSync(fileDir, { recursive: true });
@@ -383,7 +389,7 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   const indexRoots = ["long-term", "projects"]
     .map((name) => path.join(memoryDir, name))
     .filter((dir) => fs.existsSync(dir));
-  const indexFiles = [...new Set(indexRoots.flatMap((dir) => listMemoryFiles(dir)))];
+  const indexFiles = [...new Set([...indexRoots.flatMap((dir) => listMemoryFiles(dir)), ...listReferenceFiles(settings, memoryDir)])];
 
   if (systemFiles.length === 0 && indexFiles.length === 0) {
     return {

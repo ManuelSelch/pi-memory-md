@@ -24,6 +24,8 @@ export interface MemoryMdSettings {
   enabled?: boolean;
   repoUrl?: string;
   localPath?: string;
+  /** Absolute or home-relative external Markdown roots to include as read-only references. */
+  referencePaths?: string[];
   systemPrompt?: {
     maxTokens?: number;
     includeProjects?: string[];

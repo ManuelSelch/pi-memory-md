@@ -26,7 +26,8 @@ pi install git:github.com/VandeeFeng/pi-memory-md
   "pi-memory-md": {
     "enabled": true,
     "repoUrl": "git@github.com:username/repo.git", // or HTTPS format
-    "localPath": "~/.pi/memory-md"
+    "localPath": "~/.pi/memory-md",
+    "referencePaths": ["~/Documents/Obsidian/Personal"]
   }
 }
 
