@@ -24,9 +24,11 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   let cachedMemoryContext: string | null = null;
   let memoryInjected = false;
 
-  /** Count injected memory items for notifications. */
+  /** Count system-file headings and indexed memory entries in the context. */
   function countMemoryItems(context: string): number {
-    return context.split("\n").filter((line) => line.startsWith("## system/") || line.startsWith("- ")).length;
+    const systemFiles = context.match(/^## system\/[^\n]+$/gm)?.length ?? 0;
+    const indexedEntries = context.match(/^- `[^`]+` — /gm)?.length ?? 0;
+    return systemFiles + indexedEntries;
   }
 
   function withMemoryTitle(context: string): string {
@@ -84,7 +86,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
     if (cachedMemoryContext && !memoryInjected) {
       memoryInjected = true;
       const fileCount = countMemoryItems(cachedMemoryContext);
-      ctx.ui.notify(`Memory injected: ${fileCount} files`, "info");
+      ctx.ui.notify(`Memory injected: ${fileCount} items`, "info");
       return {
         message: {
           customType: "pi-memory-md",
