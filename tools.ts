@@ -1070,7 +1070,7 @@ export function registerMemoryInit(
         content: [
           {
             type: "text",
-            text: `Memory repository initialized:\n${result.message}\n\nCreated directory structure:\n${["system", "projects", "long-term/user", "long-term/tech", "reference"].map((d) => `  - ${d}`).join("\n")}`,
+            text: `Memory repository initialized:\n${result.message}\n\nCreated directory structure:\n${["system", "projects", "long-term/user", "long-term/tech"].map((d) => `  - ${d}`).join("\n")}`,
           },
         ],
         details: { success: true },

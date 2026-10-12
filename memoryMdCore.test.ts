@@ -53,7 +53,7 @@ it("loads memory by folder regardless of legacy metadata", () => {
   const context = buildMemoryContext({ localPath: memoryDir }, "/project");
   expect(context).toContain("## system/policy.md\n\n# Legacy body");
   expect(context).toContain("- projects/example/note.md — Legacy note [legacy]");
-  expect(context).toContain("- reference/note.md — Legacy note [legacy]");
+  expect(context).not.toContain("- reference/note.md — Legacy note [legacy]");
   expect(context.match(/# Legacy body/g)).toHaveLength(1);
 });
 

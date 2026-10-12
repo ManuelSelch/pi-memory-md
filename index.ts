@@ -118,7 +118,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
       const result = await gitExec(pi, settings.localPath!, ["status", "--porcelain"]);
       const isDirty = result.stdout.trim().length > 0;
 
-      const referenceFolders = [path.join(memoryDir, "reference"), ...(settings.referencePaths ?? [])];
+      const referenceFolders = settings.referencePaths ?? [];
       const status = [
         `Repo: ${isDirty ? "Uncommitted changes" : "Clean"}`,
         "Reference folders:",
@@ -148,7 +148,7 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(`Memory already exists: ${result.message}`, "info");
       } else {
         ctx.ui.notify(
-          `Memory initialized: ${result.message}\n\nCreated:\n  - system\n  - projects\n  - long-term/user\n  - long-term/tech\n  - reference`,
+          `Memory initialized: ${result.message}\n\nCreated:\n  - system\n  - projects\n  - long-term/user\n  - long-term/tech`,
           "info",
         );
       }

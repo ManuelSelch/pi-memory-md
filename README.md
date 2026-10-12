@@ -106,7 +106,6 @@ Markdown content...
     ├── system/             # Always-loaded policies and preferences
     ├── projects/           # Project-specific memory
     ├── long-term/          # Durable user and technical knowledge
-    ├── reference/          # Read-only, on-demand docs
     └── archive/            # Retired memory
 ```
 
