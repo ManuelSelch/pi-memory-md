@@ -207,7 +207,6 @@ function validateFrontmatter(data: ParsedFrontmatter): { valid: boolean; error?:
     return { valid: false, error: "'tags' must be an array of strings" };
   }
 
-  // Unknown metadata is retained for compatibility, but does not control loading.
   return { valid: true };
 }
 
@@ -223,11 +222,17 @@ export function readMemoryFile(filePath: string): MemoryFile | null {
       };
     }
 
-    return {
-      path: filePath,
-      frontmatter: parsed.data as MemoryFrontmatter,
-      content: parsed.content,
+    const { description, limit, tags, created, updated, generated, generator } = parsed.data;
+    const frontmatter: MemoryFrontmatter = {
+      description: typeof description === "string" ? description : "No description",
+      ...(typeof limit === "number" ? { limit } : {}),
+      ...(Array.isArray(tags) ? { tags: tags.filter((tag): tag is string => typeof tag === "string") } : {}),
+      ...(typeof created === "string" ? { created } : {}),
+      ...(typeof updated === "string" ? { updated } : {}),
+      ...(typeof generated === "boolean" ? { generated } : {}),
+      ...(typeof generator === "string" ? { generator } : {}),
     };
+    return { path: filePath, frontmatter, content: parsed.content };
   } catch (error) {
     console.error(`Failed to read memory file ${filePath}:`, error instanceof Error ? error.message : error);
     return null;
