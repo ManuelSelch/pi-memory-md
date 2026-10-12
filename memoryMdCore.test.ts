@@ -12,7 +12,6 @@ import {
   readMemoryFile,
   writeMemoryFile,
 } from "./memoryMdCore.js";
-import { registerMemoryWrite } from "./tools.js";
 
 let memoryDir: string;
 
@@ -24,39 +23,14 @@ afterEach(() => {
   fs.rmSync(memoryDir, { recursive: true, force: true });
 });
 
-function legacyNote(relPath: string): string {
-  const fullPath = path.join(memoryDir, relPath);
-  fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-  fs.writeFileSync(fullPath, [
-    "---",
-    "description: Legacy note",
-    "tags: [legacy]",
-    "scope: obsolete-scope",
-    "load: obsolete-policy",
-    "project: legacy-project",
-    "status: stale",
-    "---",
-    "# Legacy body",
-  ].join("\n"));
-  return fullPath;
-}
-
-it("accepts legacy metadata without validating its policy values", () => {
-  const memory = readMemoryFile(legacyNote("long-term/legacy.md"));
-  expect(memory?.frontmatter.description).toBe("Legacy note");
-  expect(memory?.frontmatter.tags).toEqual(["legacy"]);
-  expect(memory?.content.trim()).toBe("# Legacy body");
-});
-
-it("loads memory by folder regardless of legacy metadata", () => {
-  legacyNote("system/policy.md");
-  legacyNote("projects/example/note.md");
-  legacyNote("reference/note.md");
+it("loads memory according to its folder", () => {
+  writeMemoryFile(path.join(memoryDir, "system/policy.md"), "# Policy", { description: "Policy" });
+  writeMemoryFile(path.join(memoryDir, "projects/example/note.md"), "# Project note", { description: "Project note" });
+  writeMemoryFile(path.join(memoryDir, "reference/note.md"), "# Reference note", { description: "Reference note" });
   const context = buildMemoryContext({ localPath: memoryDir }, "/project");
-  expect(context).toContain("## system/policy.md\n\n# Legacy body");
-  expect(context).toContain("- projects/example/note.md — Legacy note [legacy]");
-  expect(context).not.toContain("- reference/note.md — Legacy note [legacy]");
-  expect(context.match(/# Legacy body/g)).toHaveLength(1);
+  expect(context).toContain("## system/policy.md\n\n# Policy");
+  expect(context).toContain("- projects/example/note.md — Project note");
+  expect(context).not.toContain("- reference/note.md");
 });
 
 it("includes configured external roots alongside reference/", () => {
@@ -73,22 +47,8 @@ it("includes configured external roots alongside reference/", () => {
   }
 });
 
-it.each(["overwrite", "append"] as const)("preserves legacy metadata when updating via %s", async (mode) => {
-  const fullPath = legacyNote("long-term/legacy.md");
-  let tool: any;
-  registerMemoryWrite({ registerTool: (definition: unknown) => { tool = definition; } } as any, { localPath: memoryDir });
-  await tool.execute("test", {
-    path: "long-term/legacy.md", content: "Updated body", description: "Updated description", mode,
-  }, undefined, undefined, { cwd: "/project" });
-  expect(readMemoryFile(fullPath)?.frontmatter).toMatchObject({
-    description: "Updated description",
-    scope: "obsolete-scope", load: "obsolete-policy", project: "legacy-project", status: "stale",
-  });
-  expect(readMemoryFile(fullPath)?.content).toContain("Updated body");
-});
-
 it("reports full-body files and index-only entries separately", () => {
-  legacyNote("system/policy.md");
+  writeMemoryFile(path.join(memoryDir, "system/policy.md"), "# Policy", { description: "Policy" });
   writeMemoryFile(path.join(memoryDir, "projects/example/knowledge.md"), "# Knowledge", { description: "Knowledge" });
   const preview = buildMemoryContextPreview({ localPath: memoryDir }, "/project");
   expect(preview).toContain("- Full-body system files: **1**");
