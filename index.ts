@@ -107,22 +107,24 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   commands.status = {
     description: "Show memory repository status",
     handler: async (_args, ctx) => {
-      const projectName = path.basename(ctx.cwd);
       const memoryDir = getMemoryDir(settings, ctx.cwd);
       const hasTieredMemory = fs.existsSync(path.join(memoryDir, "system")) || fs.existsSync(path.join(memoryDir, "projects")) || fs.existsSync(path.join(memoryDir, "long-term"));
 
       if (!hasTieredMemory) {
-        ctx.ui.notify(`Memory: ${projectName} | Not initialized | Use /memory init to set up`, "info");
+        ctx.ui.notify("Repo: Not initialized\nUse /memory init to set up", "info");
         return;
       }
 
       const result = await gitExec(pi, settings.localPath!, ["status", "--porcelain"]);
       const isDirty = result.stdout.trim().length > 0;
 
-      ctx.ui.notify(
-        `Memory: ${projectName} | Repo: ${isDirty ? "Uncommitted changes" : "Clean"} | Path: ${memoryDir}`,
-        isDirty ? "warning" : "info",
-      );
+      const referenceFolders = [path.join(memoryDir, "reference"), ...(settings.referencePaths ?? [])];
+      const status = [
+        `Repo: ${isDirty ? "Uncommitted changes" : "Clean"}`,
+        "Reference folders:",
+        ...[...new Set(referenceFolders)].map((folder) => `  - ${folder}`),
+      ].join("\n");
+      ctx.ui.notify(status, isDirty ? "warning" : "info");
     },
   };
 
