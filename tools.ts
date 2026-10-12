@@ -448,11 +448,13 @@ export function registerMemoryCleanup(pi: ExtensionAPI, settings: MemoryMdSettin
           if (!approved) return result(false, [], "Memory update was not approved");
         }
         const frontmatter = {
-          ...current?.frontmatter,
           description: input.description ?? current?.frontmatter.description ?? "Updated memory",
-          ...(input.tags !== undefined ? { tags: input.tags } : {}),
+          ...(input.tags !== undefined ? { tags: input.tags } : current?.frontmatter.tags ? { tags: current.frontmatter.tags } : {}),
+          ...(current?.frontmatter.limit !== undefined ? { limit: current.frontmatter.limit } : {}),
           created: current?.frontmatter.created ?? getCurrentDate(),
           updated: getCurrentDate(),
+          ...(current?.frontmatter.generated !== undefined ? { generated: current.frontmatter.generated } : {}),
+          ...(current?.frontmatter.generator !== undefined ? { generator: current.frontmatter.generator } : {}),
         };
         writeMemoryFile(path.join(memoryDir, notePath), input.content, frontmatter);
         if (notePath.startsWith("projects/") && path.basename(notePath).toLocaleLowerCase() !== "index.md") generateProjectsIndex(memoryDir);
@@ -686,11 +688,13 @@ export function registerMemoryWrite(pi: ExtensionAPI, settings: MemoryMdSettings
       }
 
       const frontmatter: MemoryFrontmatter = {
-        ...existing?.frontmatter,
         description,
+        ...(tags ? { tags } : existing?.frontmatter.tags ? { tags: existing.frontmatter.tags } : {}),
+        ...(existing?.frontmatter.limit !== undefined ? { limit: existing.frontmatter.limit } : {}),
         created: existing?.frontmatter.created || getCurrentDate(),
         updated: getCurrentDate(),
-        ...(tags && { tags }),
+        ...(existing?.frontmatter.generated !== undefined ? { generated: existing.frontmatter.generated } : {}),
+        ...(existing?.frontmatter.generator !== undefined ? { generator: existing.frontmatter.generator } : {}),
       };
 
       const nextContent = mode === "append" && existing ? `${existing.content.trimEnd()}\n\n${content.trimStart()}` : content;
