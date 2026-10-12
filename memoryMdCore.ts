@@ -490,6 +490,7 @@ export function buildMemoryContextPreview(
     "# Memory Context Preview",
     "",
     `Path: \`${parts.memoryDir}\``,
+    "",
     `Estimated size: **${parts.estimatedTokens} tokens** / budget **${parts.budgetTokens} tokens**`,
     "",
     "## Injected memory",
@@ -497,10 +498,5 @@ export function buildMemoryContextPreview(
     `- Full-body system files: **${parts.systemFileCount}**`,
     `- Index-only entries: **${parts.injectedIndexEntries - parts.systemFileCount}**`,
     `- Omitted by budget: **${parts.omittedIndexEntries}**`,
-    "- `system/` file bodies are injected in full; indexed memory needs `memory_read` for details.",
-    "",
-    "## Exact context",
-    "",
-    "Use `memory_context({ mode: \"exact\" })` or `/memory context exact` to view the exact injected text.",
   ].join("\n");
 }
