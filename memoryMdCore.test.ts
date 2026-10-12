@@ -4,11 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   buildMemoryContext,
+  buildMemoryContextPreview,
   createDefaultFiles,
   ensureDirectoryStructure,
   listMemoryFiles,
   listReferenceFiles,
   readMemoryFile,
+  writeMemoryFile,
 } from "./memoryMdCore.js";
 import { registerMemoryWrite } from "./tools.js";
 
@@ -64,7 +66,8 @@ it("includes configured external roots alongside reference/", () => {
     fs.writeFileSync(note, "---\ndescription: External note\ntags: [vault]\n---\n# External content");
     const settings = { localPath: memoryDir, referencePaths: [vault] };
     expect(listReferenceFiles(settings, memoryDir)).toContain(note);
-    expect(buildMemoryContext(settings, "/project")).toContain("External note [vault]");
+    expect(buildMemoryContext(settings, "/project")).not.toContain("External note [vault]");
+    expect(buildMemoryContext(settings, "/project")).not.toContain(note);
   } finally {
     fs.rmSync(vault, { recursive: true, force: true });
   }
@@ -82,6 +85,15 @@ it.each(["overwrite", "append"] as const)("preserves legacy metadata when updati
     scope: "obsolete-scope", load: "obsolete-policy", project: "legacy-project", status: "stale",
   });
   expect(readMemoryFile(fullPath)?.content).toContain("Updated body");
+});
+
+it("reports full-body files and index-only entries separately", () => {
+  legacyNote("system/policy.md");
+  writeMemoryFile(path.join(memoryDir, "projects/example/knowledge.md"), "# Knowledge", { description: "Knowledge" });
+  const preview = buildMemoryContextPreview({ localPath: memoryDir }, "/project");
+  expect(preview).toContain("- Full-body system files: **1**");
+  expect(preview).toMatch(/- Index-only entries: \*\*\d+\*\*/);
+  expect(preview).not.toContain("Injected full bodies/index entries");
 });
 
 it("omits removed properties from new default notes", () => {

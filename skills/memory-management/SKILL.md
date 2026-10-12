@@ -145,7 +145,7 @@ memory_list(directory="projects/pi-memory-md")
 memory_search(grep="typescript preferences")
 ```
 
-Use `memory_read` for full content. The injected context contains complete `system/` bodies and index entries for durable areas.
+Use `memory_read` for full content. The injected context contains complete `system/` bodies and index entries for durable areas. Reference files are not included in the injected index; discover them with `memory_search`, then read relevant files with `memory_read`.
 
 ## Updating and Deleting
 

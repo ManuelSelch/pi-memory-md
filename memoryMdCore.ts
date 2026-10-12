@@ -388,7 +388,7 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
   const indexRoots = ["long-term", "projects"]
     .map((name) => path.join(memoryDir, name))
     .filter((dir) => fs.existsSync(dir));
-  const indexFiles = [...new Set([...indexRoots.flatMap((dir) => listMemoryFiles(dir)), ...listReferenceFiles(settings, memoryDir)])];
+  const indexFiles = [...new Set(indexRoots.flatMap((dir) => listMemoryFiles(dir)))];
 
   if (systemFiles.length === 0 && indexFiles.length === 0) {
     return {
@@ -456,7 +456,7 @@ function buildMemoryContextParts(settings: MemoryMdSettings, cwd: string): {
     context,
     memoryDir,
     systemFileCount: systemFiles.length,
-    injectedIndexEntries: entries.length + systemFiles.length,
+    injectedIndexEntries: entries.length,
     omittedIndexEntries: omitted,
     budgetTokens,
     estimatedTokens: Math.ceil(context.length / CHARS_PER_TOKEN),
@@ -494,8 +494,8 @@ export function buildMemoryContextPreview(
     "",
     "## Injected memory",
     "",
-    `- System markdown files: **${parts.systemFileCount}**`,
-    `- Injected full bodies/index entries: **${parts.injectedIndexEntries}**`,
+    `- Full-body system files: **${parts.systemFileCount}**`,
+    `- Index-only entries: **${parts.injectedIndexEntries - parts.systemFileCount}**`,
     `- Omitted by budget: **${parts.omittedIndexEntries}**`,
     "- `system/` file bodies are injected in full; indexed memory needs `memory_read` for details.",
     "",
