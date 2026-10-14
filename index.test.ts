@@ -108,6 +108,32 @@ it("injects memory into a new session", async () => {
   expect(result).toMatchObject({ message: { customType: "pi-memory-md", display: false } });
 });
 
+it.each([0, 56])("counts system files and %i indexed entries, not policy bullets", async (entryCount) => {
+  vi.mocked(buildMemoryContext).mockReturnValue([
+    "# Project Memory",
+    "## System memory",
+    "## system/memory-policy.md",
+    "- `system/` — always loaded",
+    "- `projects/` — working memory",
+    "- `long-term/` — durable knowledge",
+    "- `projects/` — read/write",
+    "- `reference/` — read-only",
+    "## system/preferences.md",
+    "# Preferences",
+    ...(entryCount ? ["## Indexed memory"] : []),
+    ...Array.from({ length: entryCount }, (_, i) => `- projects/example/note-${i}.md — A memory note [example]`),
+    "- … 3 memory file(s) omitted for space; use memory_list to see them.",
+  ].join("\n\n"));
+  const handlers = new Map<string, Function>();
+  const pi = { on: (name: string, handler: Function) => handlers.set(name, handler), registerCommand: vi.fn() };
+  const notify = vi.fn();
+  const ctx = { cwd: "/project", ui: { notify }, sessionManager: { getBranch: () => [] } };
+  memoryMdExtension(pi as any);
+  await handlers.get("session_start")!({ reason: "new" }, ctx);
+  await handlers.get("before_agent_start")!({}, ctx);
+  expect(notify).toHaveBeenCalledWith(`Memory injected: ${2 + entryCount} items`, "info");
+});
+
 it("does not inject memory again when reopening a session", async () => {
   vi.mocked(syncRepository).mockResolvedValue({ success: true, updated: false, message: "Already latest" });
   vi.mocked(buildMemoryContext).mockReturnValue("## system/preferences.md\n\n# Preferences");

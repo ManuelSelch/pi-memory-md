@@ -27,7 +27,8 @@ export default function memoryMdExtension(pi: ExtensionAPI): void {
   /** Count system-file headings and indexed memory entries in the context. */
   function countMemoryItems(context: string): number {
     const systemFiles = context.match(/^## system\/[^\n]+$/gm)?.length ?? 0;
-    const indexedEntries = context.match(/^- `[^`]+` — /gm)?.length ?? 0;
+    const indexSection = context.split(/^## Indexed memory\s*$/m)[1] ?? "";
+    const indexedEntries = indexSection.match(/^- [^\n]+ — /gm)?.length ?? 0;
     return systemFiles + indexedEntries;
   }
 
